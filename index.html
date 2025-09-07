@@ -17,18 +17,20 @@
 </head>
 <body>
   <div id="wrap">
-    <!-- Load local bundle/showcase.html instead of CDN -->
+    <!-- IMPORTANT: showcase.html lives under bundle/dist/ -->
     <iframe
       id="mp"
       allow="fullscreen; xr-spatial-tracking"
       allowfullscreen
-      src="bundle/showcase.html?m=1ghABoaBFPZ&applicationKey=akqd0dp3hr9wz4eu70zd1rsab&play=1&qs=1&brand=0">
+      src="">
     </iframe>
 
     <div id="hud">
       <div class="row">
         <button class="btn" id="btnDollhouse">Dollhouse start</button>
         <button class="btn" id="btnInside">Inside start</button>
+      </div>
+      <div class="row">
         <label><input type="checkbox" id="chkBrand" checked /> Hide branding</label>
         <label><input type="checkbox" id="chkQuickstart" checked /> Quiet UI</label>
         <label><input type="checkbox" id="chkAutoplay" checked /> Autoplay</label>
@@ -41,43 +43,73 @@
   </div>
 
   <script>
+    // ---- constants / handles ----
+    const MODEL_SID = "1ghABoaBFPZ";
+    const APPKEY    = "akqd0dp3hr9wz4eu70zd1rsab";
+
     const mp   = document.getElementById("mp");
     const qs   = document.getElementById("chkQuickstart");
     const br   = document.getElementById("chkBrand");
     const ap   = document.getElementById("chkAutoplay");
     const btnR = document.getElementById("btnReload");
     const btnF = document.getElementById("btnFullscreen");
+    const btnInside = document.getElementById("btnInside");
+    const btnDoll   = document.getElementById("btnDollhouse");
 
+    // Build the showcase URL pointing at your local bundle/dist/showcase.html
     function buildShowcaseUrl({ mode = "inside" } = {}) {
       const params = new URLSearchParams({
-        m: "1ghABoaBFPZ",
-        applicationKey: "akqd0dp3hr9wz4eu70zd1rsab",
+        m: MODEL_SID,
+        applicationKey: APPKEY,
         play: ap.checked ? "1" : "0",
-        qs: qs.checked ? "1" : "0",
-        brand: br.checked ? "0" : "1"
+        qs:   qs.checked ? "1" : "0",
+        brand: br.checked ? "0" : "1",
       });
       if (mode === "dollhouse") params.set("dh", "1");
-      return `bundle/showcase.html?${params.toString()}`;
+      return `bundle/dist/showcase.html?${params.toString()}`;
     }
 
     function loadSpace(mode) {
       const url = buildShowcaseUrl({ mode });
-      console.log("Loading space:", url);
+      console.log("[iframe] loading:", url);
       mp.src = url;
     }
 
+    // Try to connect to the SDK with a short retry loop
+    async function connectSdkWithRetry(maxMs = 8000, stepMs = 250) {
+      const started = Date.now();
+      while (Date.now() - started < maxMs) {
+        try {
+          if (mp.contentWindow && mp.contentWindow.MP_SDK && typeof mp.contentWindow.MP_SDK.connect === "function") {
+            const sdk = await mp.contentWindow.MP_SDK.connect(mp.contentWindow);
+            console.log("✅ SDK connected:", sdk);
+            return sdk;
+          }
+        } catch (e) {
+          console.debug("SDK connect attempt failed, will retry…", e);
+        }
+        await new Promise(r => setTimeout(r, stepMs));
+      }
+      throw new Error("SDK connect timed out — MP_SDK not present on iframe window");
+    }
+
+    // Apply / Fullscreen / Presets
     btnR.addEventListener("click", () => loadSpace());
     btnF.addEventListener("click", () => mp.requestFullscreen());
+    btnInside.addEventListener("click", () => loadSpace("inside"));
+    btnDoll  .addEventListener("click", () => loadSpace("dollhouse"));
 
-    // Connect to SDK after iframe loads
+    // When the iframe finishes navigating, try to connect to the SDK
     mp.addEventListener("load", async () => {
       try {
-        const sdk = await mp.contentWindow.MP_SDK.connect(mp.contentWindow);
-        console.log("✅ SDK connected:", sdk);
+        await connectSdkWithRetry();
       } catch (err) {
         console.error("❌ SDK connect failed:", err);
       }
     });
+
+    // Initial load (inside view)
+    loadSpace("inside");
   </script>
 </body>
 </html>
