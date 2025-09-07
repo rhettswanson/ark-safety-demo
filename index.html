@@ -83,6 +83,43 @@
     btnR.addEventListener("click", () => loadSpace());
     btnF.addEventListener("click", () => mp.requestFullscreen());
 
+    // --- Robust connect: try common setup signatures ---
+    async function tryConnect() {
+      const attempts = [
+        {
+          note: "config object: {iframe, applicationKey, logLevel}",
+          call: () => iface.setup({ iframe: mp, applicationKey: APPKEY, logLevel: 'debug' })
+        },
+        {
+          note: "config object with nested log: {iframe, applicationKey, log:{level}}",
+          call: () => iface.setup({ iframe: mp, applicationKey: APPKEY, log: { level: 'debug' } })
+        },
+        {
+          note: "positional: (iframe, appKey, {logLevel})",
+          call: () => iface.setup(mp, APPKEY, { logLevel: 'debug' })
+        },
+        {
+          note: "positional: (iframe, {applicationKey, logLevel})",
+          call: () => iface.setup(mp, { applicationKey: APPKEY, logLevel: 'debug' })
+        }
+      ];
+
+      let lastErr;
+      for (const a of attempts) {
+        try {
+          console.log(`Attempting iface.setup with: ${a.note}`);
+          const mpSdk = await a.call();
+          console.log("✅ SDK connected with variant:", a.note, mpSdk);
+          return mpSdk;
+        } catch (e) {
+          console.warn("Variant failed:", a.note, e);
+          lastErr = e;
+        }
+      }
+      console.error("❌ All setup variants failed. iface exports:", Object.keys(iface), lastErr);
+      throw lastErr;
+    }
+
     // Connect after iframe load
     mp.addEventListener("load", async () => {
       try {
@@ -90,18 +127,10 @@
           console.error("❌ iface.setup not available, exports:", Object.keys(iface));
           return;
         }
-
-        console.log("Attempting iface.setup with config object…");
-
-        const mpSdk = await iface.setup({
-          iframe: mp,
-          applicationKey: APPKEY,
-          logLevel: 'debug'   // REQUIRED to avoid "reading 'logLevel'" errors
-        });
-
-        console.log("✅ SDK connected:", mpSdk);
+        const mpSdk = await tryConnect();
+        // You can add any mpSdk calls here (once connected)
       } catch (e) {
-        console.error("❌ SDK connect failed:", e);
+        // already logged
       }
     });
   </script>
