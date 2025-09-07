@@ -2,39 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Ark Safety Demo – Matterport + AI</title>
-
-  <!-- Self-hosted Matterport SDK (ES modules) -->
-  <script type="module" src="mp-sdk/sdk-interface.js"></script>
-  <script type="module" src="mp-sdk/sdk-client.js"></script>
-
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ark Safety Demo</title>
   <style>
-    html,body { height:100%; margin:0; }
-    #wrap { position:relative; height:100%; }
-    #mp   { width:100%; height:100%; border:0; }
-
-    /* HUD */
-    #hud  {
-      position:absolute; left:12px; top:12px;
-      background:rgba(0,0,0,.55); color:#fff; padding:10px 12px;
-      border-radius:10px; font:14px/1.35 system-ui, Segoe UI, Roboto, Arial, sans-serif;
-      display:flex; gap:8px; align-items:center; flex-wrap:wrap;
-      box-shadow:0 6px 18px rgba(0,0,0,.25);
-    }
-    #hud .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-    #hud label { opacity:.9; }
-    .btn, select {
-      appearance: none; border:0; border-radius:10px; padding:8px 10px; cursor:pointer;
-      background:#ffffff; color:#111; font-weight:600;
-      box-shadow: 0 2px 8px rgba(0,0,0,.25);
-    }
-    .btn:active { transform: translateY(1px); }
-    .switch {
-      display:inline-flex; align-items:center; gap:6px; cursor:pointer; user-select:none;
-      background:#fff; color:#111; padding:6px 10px; border-radius:999px; box-shadow:0 2px 8px rgba(0,0,0,.25);
-    }
-    .switch input { accent-color:#111; }
+    html, body { margin:0; height:100%; }
+    #wrap { height:100%; display:grid; }
+    #mp { width:100%; height:100%; border:0; }
+    #hud { position:absolute; top:10px; left:10px; z-index:10; }
+    .btn { margin:2px; padding:6px 10px; }
+    .row { margin-bottom:5px; }
   </style>
 </head>
 <body>
@@ -43,100 +19,83 @@
       id="mp"
       allow="fullscreen; xr-spatial-tracking"
       allowfullscreen
-      src=""
-    ></iframe>
+      src="">
+    </iframe>
+  </div>
 
-    <div id="hud">
-      <div class="row">
-        <button class="btn" id="btnDollhouse">Dollhouse start</button>
-        <button class="btn" id="btnInside">Inside start</button>
-        <label class="switch">
-          <input type="checkbox" id="chkBrand" checked />
-          <span>Hide branding</span>
-        </label>
-        <label class="switch">
-          <input type="checkbox" id="chkQuickstart" checked />
-          <span>Quiet UI</span>
-        </label>
-        <label class="switch">
-          <input type="checkbox" id="chkAutoplay" checked />
-          <span>Autoplay</span>
-        </label>
-      </div>
-      <div class="row">
-        <button class="btn" id="btnReload">Apply</button>
-        <button class="btn" id="btnFullscreen">Fullscreen</button>
-      </div>
+  <div id="hud">
+    <div class="row">
+      <button class="btn" id="btnDollhouse">Dollhouse start</button>
+      <button class="btn" id="btnInside">Inside start</button>
+      <label class="switch">
+        <input type="checkbox" id="chkBrand" checked />
+        <span>Hide branding</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="chkQuickstart" checked />
+        <span>Quiet UI</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="chkAutoplay" checked />
+        <span>Autoplay</span>
+      </label>
+    </div>
+    <div class="row">
+      <button class="btn" id="btnReload">Apply</button>
+      <button class="btn" id="btnFullscreen">Fullscreen</button>
     </div>
   </div>
 
-  <!-- Your app logic as an ES module -->
-  <script type="module">
-    // --- small helper to avoid race with module load / iframe ---
-    const waitFor = (pred, {interval=50, timeout=8000} = {}) =>
-      new Promise((resolve, reject) => {
-        const t0 = performance.now();
-        const h = setInterval(() => {
-          if (pred()) { clearInterval(h); resolve(); }
-          else if (performance.now() - t0 > timeout) {
-            clearInterval(h); reject(new Error("Timed out waiting for condition"));
-          }
-        }, interval);
-      });
+  <!-- Load your self-hosted SDK files -->
+  <script src="./mp-sdk/sdk-interface.js" type="module"></script>
+  <script src="./mp-sdk/sdk-client.js" type="module"></script>
 
-    // Model + key
-    const MODEL  = "1ghABoaBFPZ";
+  <script>
+    const MODEL = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
 
-    // Your AI backend (via Cloudflare tunnel)
-    const BACKEND_URL = "https://leads-scanners-copying-sadi.trycloudflare.com";
-
-    // Elements
-    const mp   = document.getElementById("mp");
-    const qs   = document.getElementById("chkQuickstart");
-    const br   = document.getElementById("chkBrand");
-    const ap   = document.getElementById("chkAutoplay");
-    const btnD = document.getElementById("btnDollhouse");
-    const btnI = document.getElementById("btnInside");
+    const mp  = document.getElementById("mp");
+    const qs  = document.getElementById("chkQuickstart");
+    const br  = document.getElementById("chkBrand");
+    const ap  = document.getElementById("chkAutoplay");
     const btnR = document.getElementById("btnReload");
     const btnF = document.getElementById("btnFullscreen");
 
-    // Build Showcase URL for the iframe
-    function buildSrc({ mode = "inside" } = {}) {
-      const params = new URLSearchParams({
+    function buildShowcaseUrl() {
+      const p = new URLSearchParams({
         m: MODEL,
         applicationKey: APPKEY,
-        qs: qs.checked ? "1" : "0",
-        brand: br.checked ? "0" : "1",
         play: ap.checked ? "1" : "0",
+        qs:   qs.checked ? "1" : "0",
+        brand: br.checked ? "0" : "1",
       });
-      if (mode === "dollhouse") params.set("dh", "1");
-      return `https://my.matterport.com/show/?${params.toString()}`;
+      return `https://my.matterport.com/show/?${p.toString()}`;
     }
 
-    function apply(mode) {
-      mp.src = buildSrc({ mode });
+    function loadSpace() {
+      mp.src = buildShowcaseUrl();
     }
 
-    // Initial load
-    apply("inside");
+    // Button hooks
+    btnR.addEventListener("click", loadSpace);
+    btnF.addEventListener("click", () => mp.requestFullscreen());
 
-    // UI actions
-    btnD.onclick = () => apply("dollhouse");
-    btnI.onclick = () => apply("inside");
-    btnR.onclick = () => apply();
-    btnF.onclick = () => mp.requestFullscreen?.();
+    // Load once on startup
+    loadSpace();
 
-    // (Optional) connect to SDK once iframe has loaded and MP_SDK is present
+    // SDK connect once iframe loads
     mp.addEventListener("load", async () => {
-  try {
-    await waitFor(() => "MP_SDK" in window);
-    const sdk = await window.MP_SDK.connect(mp, "3.2", APPKEY);
-    console.log("SDK connected", sdk);
-  } catch (e) {
-    console.warn("SDK not ready (skipping connect):", e.message);
-  }
-});
+      try {
+        if (window.MP_SDK) {
+          const sdk = await window.MP_SDK.connect(mp, "3.2", APPKEY);
+          console.log("SDK connected", sdk);
+        } else {
+          console.warn("MP_SDK not found yet");
+        }
+      } catch (e) {
+        console.warn("SDK not ready (skipping connect):", e.message);
+      }
+    });
   </script>
 </body>
 </html>
