@@ -41,8 +41,8 @@
 
   <script type="module">
     /***** 1) Import vendored SDK files *****/
-    import './mp-sdk/sdk-client.js';                  // transport, side-effects (logs you see)
-    import * as iface from './mp-sdk/sdk-interface.js'; // the “interface” layer
+    import './mp-sdk/sdk-client.js';                   // transport (side effects + console banner)
+    import * as iface from './mp-sdk/sdk-interface.js'; // your interface build (exports shows only: ['setup'])
 
     /***** 2) Constants & elements *****/
     const MODEL  = "1ghABoaBFPZ";
@@ -86,44 +86,51 @@
     btnR.addEventListener("click", () => loadSpace());
     btnF.addEventListener("click", () => mp.requestFullscreen());
 
-    /***** 5) Connect after iframe load using the interface’s entry point *****/
+    /***** 5) Connect after iframe load using iface.setup (many signatures) *****/
     mp.addEventListener("load", async () => {
-      try {
-        // Inspect what the interface actually exports (helps us debug quickly)
-        console.log("[iface keys]", Object.keys(iface));
+      const exportsList = Object.keys(iface);
+      console.log("[iface keys]", exportsList);
 
-        let sdk;
-
-        // Preferred: module export named `connect(iframe, version, appKey)`
-        if (typeof iface.connect === "function") {
-          console.log("Attempting iface.connect(mp, '3.2', APPKEY) …");
-          sdk = await iface.connect(mp, "3.2", APPKEY);
-
-        // Common legacy: `GetSDK(elementIdOrIframe, appKey)`
-        } else if (typeof iface.GetSDK === "function") {
-          console.log("Attempting iface.GetSDK('mp', APPKEY) …");
-          // Their GetSDK resolves after it internally calls contentWindow.MP_SDK.connect
-          sdk = await iface.GetSDK("mp", APPKEY);
-
-        // Some builds export a default that is the getter/connector
-        } else if (typeof iface.default === "function") {
-          console.log("Attempting iface.default('mp', APPKEY) …");
-          sdk = await iface.default("mp", APPKEY);
-
-        // Last-resort fallback if the interface attached a global anyway
-        } else if (window.MP_SDK && typeof window.MP_SDK.connect === "function") {
-          console.log("Attempting window.MP_SDK.connect(mp, '3.2', APPKEY) …");
-          sdk = await window.MP_SDK.connect(mp, "3.2", APPKEY);
-
-        } else {
-          console.error("No suitable connect entry found. Exports were:", Object.keys(iface));
-          return;
-        }
-
-        console.log("✅ SDK connected:", sdk);
-      } catch (e) {
-        console.error("❌ SDK connect failed:", e);
+      if (!('setup' in iface) || typeof iface.setup !== 'function') {
+        console.error("No usable connector on interface build. Exports were:", exportsList);
+        return;
       }
+
+      // Try common signatures in order; stop at the first that returns a truthy sdk.
+      const attempts = [
+        () => ({ label: "setup(iframe, appKey)",       call: () => iface.setup(mp, APPKEY) }),
+        () => ({ label: "setup('mp', appKey)",         call: () => iface.setup('mp', APPKEY) }),
+        () => ({ label: "setup(iframe, {appKey})",     call: () => iface.setup(mp, { applicationKey: APPKEY }) }),
+        () => ({ label: "setup({ iframe, appKey })",   call: () => iface.setup({ iframe: mp, applicationKey: APPKEY }) }),
+        () => ({ label: "setup({ element, appKey })",  call: () => iface.setup({ element: mp, applicationKey: APPKEY }) }),
+        () => ({ label: "setup({ iframeId, appKey })", call: () => iface.setup({ iframeId: 'mp', applicationKey: APPKEY }) }),
+        () => ({ label: "setup({ appKey })",           call: () => iface.setup({ applicationKey: APPKEY }) }),
+      ];
+
+      let mpSdk = null, lastError = null;
+      for (const get of attempts) {
+        const { label, call } = get();
+        try {
+          console.log(`Attempting iface.${label} …`);
+          // eslint-disable-next-line no-await-in-loop
+          const maybe = await call();
+          if (maybe) { mpSdk = maybe; console.log("✅ Connected via", label, maybe); break; }
+          console.warn(`iface.${label} returned falsy`, maybe);
+        } catch (e) {
+          lastError = e;
+          console.warn(`iface.${label} threw:`, e);
+        }
+      }
+
+      if (!mpSdk) {
+        console.error("❌ All iface.setup attempts failed.", lastError ?? "(no exception)");
+        return;
+      }
+
+      // You now have mpSdk; you can use it here if needed.
+      // Example (if supported by your build):
+      // const camera = await mpSdk.Camera.getState();
+      // console.log("Camera state:", camera);
     });
   </script>
 </body>
