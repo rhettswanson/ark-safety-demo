@@ -129,15 +129,14 @@
 
     // (Optional) connect to SDK once iframe has loaded and MP_SDK is present
     mp.addEventListener("load", async () => {
-      try {
-        await waitFor(() => "MP_SDK" in window);
-        // If you need the SDK, uncomment:
-        // const sdk = await window.MP_SDK.connect(mp, APPKEY);
-        // console.log("SDK connected", sdk);
-      } catch (e) {
-        console.warn("SDK not ready (skipping connect):", e.message);
-      }
-    });
+  try {
+    await waitFor(() => "MP_SDK" in window);
+    const sdk = await window.MP_SDK.connect(mp, "3.2", APPKEY);
+    console.log("SDK connected", sdk);
+  } catch (e) {
+    console.warn("SDK not ready (skipping connect):", e.message);
+  }
+});
   </script>
 </body>
 </html>
