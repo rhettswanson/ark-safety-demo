@@ -13,7 +13,6 @@
     .btn:hover { background:#2c2c2c; }
     .row { margin-bottom:6px; }
     label { margin-right:10px; user-select:none; }
-    a, a:visited { color:#9cf; }
   </style>
 </head>
 <body>
@@ -40,17 +39,12 @@
     </div>
   </div>
 
-  <!-- Everything below runs as one ES Module -->
   <script type="module">
-    /**** 1) Import your vendored SDK modules and expose MP_SDK on window ****/
-    import './mp-sdk/sdk-client.js';              // side-effects (transport)
-    import * as iface from './mp-sdk/sdk-interface.js'; // actual interface
+    /***** 1) Import vendored SDK files *****/
+    import './mp-sdk/sdk-client.js';                  // transport, side-effects (logs you see)
+    import * as iface from './mp-sdk/sdk-interface.js'; // the “interface” layer
 
-    // The interface may export MP_SDK, default, or members directly. Normalize it:
-    const MP = iface?.MP_SDK ?? iface?.default ?? iface;
-    window.MP_SDK = MP;
-
-    /**** 2) App constants & elements ****/
+    /***** 2) Constants & elements *****/
     const MODEL  = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
 
@@ -64,11 +58,11 @@
     const btnR = document.getElementById("btnReload");
     const btnF = document.getElementById("btnFullscreen");
 
-    /**** 3) Build & load showcase URL ****/
+    /***** 3) Build & set showcase URL *****/
     function buildShowcaseUrl({ mode = "inside" } = {}) {
       const params = new URLSearchParams({
         m: MODEL,
-        applicationKey: APPKEY,         // required when you need the SDK
+        applicationKey: APPKEY,
         play: ap.checked ? "1" : "0",
         qs:   qs.checked ? "1" : "0",
         brand: br.checked ? "0" : "1"
@@ -86,22 +80,46 @@
     // Initial load
     loadSpace("inside");
 
-    /**** 4) Wire UI ****/
+    /***** 4) UI *****/
     btnD.addEventListener("click", () => loadSpace("dollhouse"));
     btnI.addEventListener("click", () => loadSpace("inside"));
     btnR.addEventListener("click", () => loadSpace());
     btnF.addEventListener("click", () => mp.requestFullscreen());
 
-    /**** 5) Connect SDK after iframe load ****/
+    /***** 5) Connect after iframe load using the interface’s entry point *****/
     mp.addEventListener("load", async () => {
       try {
-        if (!window.MP_SDK) {
-          console.error("❌ MP_SDK still missing after import.");
+        // Inspect what the interface actually exports (helps us debug quickly)
+        console.log("[iface keys]", Object.keys(iface));
+
+        let sdk;
+
+        // Preferred: module export named `connect(iframe, version, appKey)`
+        if (typeof iface.connect === "function") {
+          console.log("Attempting iface.connect(mp, '3.2', APPKEY) …");
+          sdk = await iface.connect(mp, "3.2", APPKEY);
+
+        // Common legacy: `GetSDK(elementIdOrIframe, appKey)`
+        } else if (typeof iface.GetSDK === "function") {
+          console.log("Attempting iface.GetSDK('mp', APPKEY) …");
+          // Their GetSDK resolves after it internally calls contentWindow.MP_SDK.connect
+          sdk = await iface.GetSDK("mp", APPKEY);
+
+        // Some builds export a default that is the getter/connector
+        } else if (typeof iface.default === "function") {
+          console.log("Attempting iface.default('mp', APPKEY) …");
+          sdk = await iface.default("mp", APPKEY);
+
+        // Last-resort fallback if the interface attached a global anyway
+        } else if (window.MP_SDK && typeof window.MP_SDK.connect === "function") {
+          console.log("Attempting window.MP_SDK.connect(mp, '3.2', APPKEY) …");
+          sdk = await window.MP_SDK.connect(mp, "3.2", APPKEY);
+
+        } else {
+          console.error("No suitable connect entry found. Exports were:", Object.keys(iface));
           return;
         }
-        console.log("Attempting MP_SDK.connect…");
-        // NOTE: your vendored interface takes (iframe, "3.2", appKey)
-        const sdk = await window.MP_SDK.connect(mp, "3.2", APPKEY);
+
         console.log("✅ SDK connected:", sdk);
       } catch (e) {
         console.error("❌ SDK connect failed:", e);
