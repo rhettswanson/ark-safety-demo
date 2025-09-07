@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ark Safety Demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Ark Safety Demo – Bundle</title>
   <style>
     html, body { margin:0; height:100%; background:#111; color:#fff; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial; }
     #wrap { height:100%; position:relative; }
@@ -17,11 +17,12 @@
 </head>
 <body>
   <div id="wrap">
+    <!-- Load local bundle/showcase.html instead of CDN -->
     <iframe
       id="mp"
       allow="fullscreen; xr-spatial-tracking"
       allowfullscreen
-      src="">
+      src="bundle/showcase.html?m=1ghABoaBFPZ&applicationKey=akqd0dp3hr9wz4eu70zd1rsab&play=1&qs=1&brand=0">
     </iframe>
 
     <div id="hud">
@@ -39,33 +40,24 @@
     </div>
   </div>
 
-  <script type="module">
-    import './mp-sdk/sdk-client.js';
-    import * as iface from './mp-sdk/sdk-interface.js';
-
-    const MODEL  = "1ghABoaBFPZ";
-    const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
-
+  <script>
     const mp   = document.getElementById("mp");
     const qs   = document.getElementById("chkQuickstart");
     const br   = document.getElementById("chkBrand");
     const ap   = document.getElementById("chkAutoplay");
-
-    const btnD = document.getElementById("btnDollhouse");
-    const btnI = document.getElementById("btnInside");
     const btnR = document.getElementById("btnReload");
     const btnF = document.getElementById("btnFullscreen");
 
     function buildShowcaseUrl({ mode = "inside" } = {}) {
       const params = new URLSearchParams({
-        m: MODEL,
-        applicationKey: APPKEY,
+        m: "1ghABoaBFPZ",
+        applicationKey: "akqd0dp3hr9wz4eu70zd1rsab",
         play: ap.checked ? "1" : "0",
-        qs:   qs.checked ? "1" : "0",
+        qs: qs.checked ? "1" : "0",
         brand: br.checked ? "0" : "1"
       });
       if (mode === "dollhouse") params.set("dh", "1");
-      return `https://my.matterport.com/show/?${params.toString()}`;
+      return `bundle/showcase.html?${params.toString()}`;
     }
 
     function loadSpace(mode) {
@@ -74,63 +66,16 @@
       mp.src = url;
     }
 
-    // Initial load
-    loadSpace("inside");
-
-    // UI
-    btnD.addEventListener("click", () => loadSpace("dollhouse"));
-    btnI.addEventListener("click", () => loadSpace("inside"));
     btnR.addEventListener("click", () => loadSpace());
     btnF.addEventListener("click", () => mp.requestFullscreen());
 
-    // --- Robust connect: try common setup signatures ---
-    async function tryConnect() {
-      const attempts = [
-        {
-          note: "config object: {iframe, applicationKey, logLevel}",
-          call: () => iface.setup({ iframe: mp, applicationKey: APPKEY, logLevel: 'debug' })
-        },
-        {
-          note: "config object with nested log: {iframe, applicationKey, log:{level}}",
-          call: () => iface.setup({ iframe: mp, applicationKey: APPKEY, log: { level: 'debug' } })
-        },
-        {
-          note: "positional: (iframe, appKey, {logLevel})",
-          call: () => iface.setup(mp, APPKEY, { logLevel: 'debug' })
-        },
-        {
-          note: "positional: (iframe, {applicationKey, logLevel})",
-          call: () => iface.setup(mp, { applicationKey: APPKEY, logLevel: 'debug' })
-        }
-      ];
-
-      let lastErr;
-      for (const a of attempts) {
-        try {
-          console.log(`Attempting iface.setup with: ${a.note}`);
-          const mpSdk = await a.call();
-          console.log("✅ SDK connected with variant:", a.note, mpSdk);
-          return mpSdk;
-        } catch (e) {
-          console.warn("Variant failed:", a.note, e);
-          lastErr = e;
-        }
-      }
-      console.error("❌ All setup variants failed. iface exports:", Object.keys(iface), lastErr);
-      throw lastErr;
-    }
-
-    // Connect after iframe load
+    // Connect to SDK after iframe loads
     mp.addEventListener("load", async () => {
       try {
-        if (typeof iface.setup !== "function") {
-          console.error("❌ iface.setup not available, exports:", Object.keys(iface));
-          return;
-        }
-        const mpSdk = await tryConnect();
-        // You can add any mpSdk calls here (once connected)
-      } catch (e) {
-        // already logged
+        const sdk = await mp.contentWindow.MP_SDK.connect(mp.contentWindow);
+        console.log("✅ SDK connected:", sdk);
+      } catch (err) {
+        console.error("❌ SDK connect failed:", err);
       }
     });
   </script>
