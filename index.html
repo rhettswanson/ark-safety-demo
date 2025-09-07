@@ -5,13 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ark Safety Demo</title>
   <style>
-    html, body { margin:0; height:100%; }
-    #wrap { height:100%; display:grid; }
-    #mp { width:100%; height:100%; border:0; }
-    #hud { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,.55); padding:10px; border-radius:6px; color:#fff; }
-    .btn { margin:2px; padding:6px 10px; cursor:pointer; }
-    .row { margin-bottom:5px; }
-    label { margin-right:10px; }
+    html, body { margin:0; height:100%; background:#111; color:#fff; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial; }
+    #wrap { height:100%; position:relative; }
+    #mp   { width:100%; height:100%; border:0; background:#000; }
+    #hud  { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,.55); padding:10px; border-radius:8px; backdrop-filter: blur(4px); }
+    .btn  { margin:2px; padding:6px 10px; cursor:pointer; border-radius:6px; border:1px solid #444; background:#222; color:#fff; }
+    .btn:hover { background:#2c2c2c; }
+    .row { margin-bottom:6px; }
+    label { margin-right:10px; user-select:none; }
+    a, a:visited { color:#9cf; }
   </style>
 </head>
 <body>
@@ -22,27 +24,33 @@
       allowfullscreen
       src="">
     </iframe>
+
+    <div id="hud">
+      <div class="row">
+        <button class="btn" id="btnDollhouse">Dollhouse start</button>
+        <button class="btn" id="btnInside">Inside start</button>
+        <label><input type="checkbox" id="chkBrand" checked /> Hide branding</label>
+        <label><input type="checkbox" id="chkQuickstart" checked /> Quiet UI</label>
+        <label><input type="checkbox" id="chkAutoplay" checked /> Autoplay</label>
+      </div>
+      <div class="row">
+        <button class="btn" id="btnReload">Apply</button>
+        <button class="btn" id="btnFullscreen">Fullscreen</button>
+      </div>
+    </div>
   </div>
 
-  <div id="hud">
-    <div class="row">
-      <button class="btn" id="btnDollhouse">Dollhouse start</button>
-      <button class="btn" id="btnInside">Inside start</button>
-      <label><input type="checkbox" id="chkBrand" checked /> Hide branding</label>
-      <label><input type="checkbox" id="chkQuickstart" checked /> Quiet UI</label>
-      <label><input type="checkbox" id="chkAutoplay" checked /> Autoplay</label>
-    </div>
-    <div class="row">
-      <button class="btn" id="btnReload">Apply</button>
-      <button class="btn" id="btnFullscreen">Fullscreen</button>
-    </div>
-  </div>
+  <!-- Everything below runs as one ES Module -->
+  <script type="module">
+    /**** 1) Import your vendored SDK modules and expose MP_SDK on window ****/
+    import './mp-sdk/sdk-client.js';              // side-effects (transport)
+    import * as iface from './mp-sdk/sdk-interface.js'; // actual interface
 
-  <!-- Load your vendored SDK files -->
-  <script type="module" src="./mp-sdk/sdk-interface.js"></script>
-  <script type="module" src="./mp-sdk/sdk-client.js"></script>
+    // The interface may export MP_SDK, default, or members directly. Normalize it:
+    const MP = iface?.MP_SDK ?? iface?.default ?? iface;
+    window.MP_SDK = MP;
 
-  <script>
+    /**** 2) App constants & elements ****/
     const MODEL  = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
 
@@ -50,15 +58,19 @@
     const qs   = document.getElementById("chkQuickstart");
     const br   = document.getElementById("chkBrand");
     const ap   = document.getElementById("chkAutoplay");
+
+    const btnD = document.getElementById("btnDollhouse");
+    const btnI = document.getElementById("btnInside");
     const btnR = document.getElementById("btnReload");
     const btnF = document.getElementById("btnFullscreen");
 
+    /**** 3) Build & load showcase URL ****/
     function buildShowcaseUrl({ mode = "inside" } = {}) {
       const params = new URLSearchParams({
         m: MODEL,
-        applicationKey: APPKEY,
+        applicationKey: APPKEY,         // required when you need the SDK
         play: ap.checked ? "1" : "0",
-        qs: qs.checked ? "1" : "0",
+        qs:   qs.checked ? "1" : "0",
         brand: br.checked ? "0" : "1"
       });
       if (mode === "dollhouse") params.set("dh", "1");
@@ -71,23 +83,26 @@
       mp.src = url;
     }
 
-    // Button actions
+    // Initial load
+    loadSpace("inside");
+
+    /**** 4) Wire UI ****/
+    btnD.addEventListener("click", () => loadSpace("dollhouse"));
+    btnI.addEventListener("click", () => loadSpace("inside"));
     btnR.addEventListener("click", () => loadSpace());
     btnF.addEventListener("click", () => mp.requestFullscreen());
 
-    // Load once at startup
-    loadSpace("inside");
-
-    // Connect SDK after iframe loads
+    /**** 5) Connect SDK after iframe load ****/
     mp.addEventListener("load", async () => {
       try {
-        if (window.MP_SDK) {
-          console.log("Attempting MP_SDK.connect...");
-          const sdk = await window.MP_SDK.connect(mp, "3.2", APPKEY);
-          console.log("✅ SDK connected:", sdk);
-        } else {
-          console.error("❌ MP_SDK not found on window.");
+        if (!window.MP_SDK) {
+          console.error("❌ MP_SDK still missing after import.");
+          return;
         }
+        console.log("Attempting MP_SDK.connect…");
+        // NOTE: your vendored interface takes (iframe, "3.2", appKey)
+        const sdk = await window.MP_SDK.connect(mp, "3.2", APPKEY);
+        console.log("✅ SDK connected:", sdk);
       } catch (e) {
         console.error("❌ SDK connect failed:", e);
       }
