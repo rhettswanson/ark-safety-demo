@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Ark Safety Demo – Matterport + AI</title>
 
-  <!-- Self-hosted Matterport SDK (order matters: interface first, then client) -->
-  <script src="mp-sdk/sdk-interface.js"></script>
-  <script src="mp-sdk/sdk-client.js"></script>
+  <!-- Self-hosted Matterport SDK (ES modules) -->
+  <script type="module" src="mp-sdk/sdk-interface.js"></script>
+  <script type="module" src="mp-sdk/sdk-client.js"></script>
 
   <style>
     html,body { height:100%; margin:0; }
@@ -70,13 +70,28 @@
     </div>
   </div>
 
-  <script>
+  <!-- Your app logic as an ES module -->
+  <script type="module">
+    // --- small helper to avoid race with module load / iframe ---
+    const waitFor = (pred, {interval=50, timeout=8000} = {}) =>
+      new Promise((resolve, reject) => {
+        const t0 = performance.now();
+        const h = setInterval(() => {
+          if (pred()) { clearInterval(h); resolve(); }
+          else if (performance.now() - t0 > timeout) {
+            clearInterval(h); reject(new Error("Timed out waiting for condition"));
+          }
+        }, interval);
+      });
+
+    // Model + key
     const MODEL  = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
 
-    // Your AI backend (through Cloudflare tunnel)
+    // Your AI backend (via Cloudflare tunnel)
     const BACKEND_URL = "https://leads-scanners-copying-sadi.trycloudflare.com";
 
+    // Elements
     const mp   = document.getElementById("mp");
     const qs   = document.getElementById("chkQuickstart");
     const br   = document.getElementById("chkBrand");
@@ -86,17 +101,16 @@
     const btnR = document.getElementById("btnReload");
     const btnF = document.getElementById("btnFullscreen");
 
-    // Build iframe Showcase URL (doesn't require SDK to load)
+    // Build Showcase URL for the iframe
     function buildSrc({ mode = "inside" } = {}) {
       const params = new URLSearchParams({
         m: MODEL,
         applicationKey: APPKEY,
-        qs: qs.checked ? "1" : "0",    // quickstart UI
-        brand: br.checked ? "0" : "1", // hide branding when 0
-        play: ap.checked ? "1" : "0"   // autoplay
+        qs: qs.checked ? "1" : "0",
+        brand: br.checked ? "0" : "1",
+        play: ap.checked ? "1" : "0",
       });
-
-      if (mode === "dollhouse") params.set("dh", "1"); // start in dollhouse
+      if (mode === "dollhouse") params.set("dh", "1");
       return `https://my.matterport.com/show/?${params.toString()}`;
     }
 
@@ -107,22 +121,21 @@
     // Initial load
     apply("inside");
 
-    // Buttons
+    // UI actions
     btnD.onclick = () => apply("dollhouse");
     btnI.onclick = () => apply("inside");
     btnR.onclick = () => apply();
-    btnF.onclick = () => {
-      if (mp.requestFullscreen) mp.requestFullscreen();
-    };
+    btnF.onclick = () => mp.requestFullscreen?.();
 
-    // (Optional) verify SDK is available once the iframe loads
-    mp.addEventListener('load', async () => {
+    // (Optional) connect to SDK once iframe has loaded and MP_SDK is present
+    mp.addEventListener("load", async () => {
       try {
-        // If you need SDK features later:
+        await waitFor(() => "MP_SDK" in window);
+        // If you need the SDK, uncomment:
         // const sdk = await window.MP_SDK.connect(mp, APPKEY);
-        // console.log('SDK connected', sdk);
-      } catch (err) {
-        console.warn('SDK connect skipped/failed:', err);
+        // console.log("SDK connected", sdk);
+      } catch (e) {
+        console.warn("SDK not ready (skipping connect):", e.message);
       }
     });
   </script>
