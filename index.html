@@ -391,34 +391,36 @@
     captureToggle.addEventListener("change", (e)=> setCaptureActive(e.target.checked));
 
     // Intercept Shift+Click above the iframe and raycast inside Showcase
-    glass.addEventListener("pointerdown", async (e) => {
-      if (!captureToggle.checked || !e.shiftKey) return;
-      e.preventDefault();
-      e.stopPropagation();
+    glass.addEventListener("pointerdown", (e) => {
+  if (!captureToggle.checked || !e.shiftKey) return;
 
-      // Convert to iframe-local pixels
-      const rect = mp.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+  // Eat the event so Showcase doesn't navigate
+  e.preventDefault();
+  e.stopPropagation();
 
-      try {
-        const hits = await _sdk.Pointer.raycast(x, y, { include: ['floor'] });
-        if (!hits.length) return;
-        const hit = hits[0];
-        const p = { x: hit.position.x, y: hit.position.z };
+  // Convert to iframe-local coords
+  const rect = mp.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
 
-        const label = prompt('Label as "exit:<name>" or "shelter:<name>"', 'exit:front');
-        if (!label) return;
-        const [kind, idRaw] = String(label).split(':');
-        const id = (idRaw || `pt-${Date.now()}`).trim();
-        const rec = { id, x: p.x, y: p.y };
-        if (kind === 'exit') exits.push(rec); else shelters.push(rec);
+  // Forward a synthetic event into the iframe.
+  // Your onViewerClick (attached to mp.contentWindow) will run
+  // and do the MP_SDK raycast exactly as before.
+  const evt = new mp.contentWindow.MouseEvent("pointerup", {
+    clientX: x,
+    clientY: y,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+    view: mp.contentWindow
+  });
 
-        drawCaptureMarker(p, kind === 'exit' ? "#10b981" : "#60a5fa");
-      } catch (err) {
-        console.warn("captureGlass raycast failed:", err);
-      }
-    });
+  try {
+    mp.contentWindow.dispatchEvent(evt);
+  } catch (err) {
+    console.warn("captureGlass forward failed:", err);
+  }
+});
 
     /********* UI wiring *********/
     document.getElementById("btnFullscreen").addEventListener("click", async()=>{
