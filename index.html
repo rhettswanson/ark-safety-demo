@@ -3,31 +3,38 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>Ark Safety Demo – Matterport</title>
+  <title>Ark Active Threat – Phase 1</title>
   <style>
     :root { color-scheme: light dark; }
     html, body { height: 100%; margin: 0; }
-    body { background:#111; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#e5e7eb; }
+    body { background:#0b0b0b; color:#e5e7eb; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
     #wrap { position: relative; height: 100%; width: 100%; overflow: hidden; }
     iframe#mp { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background:#000; }
 
     #hud {
-      position: absolute; top: 10px; left: 10px; z-index: 20;
-      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-      background: rgba(0,0,0,.6); padding: 10px; border-radius: 10px; backdrop-filter: blur(4px);
+      position: absolute; top: 10px; left: 10px; z-index: 30;
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      background: rgba(0,0,0,.55); padding: 12px; border-radius: 12px; backdrop-filter: blur(6px);
+      box-shadow: 0 6px 20px rgba(0,0,0,.35);
     }
-    .btn { appearance: none; border: 0; padding: 6px 10px; border-radius: 8px; cursor: pointer; background:#222; color:#eee; font-weight: 600; }
-    .btn:hover { background:#2f2f2f; }
-    .switch { display:inline-flex; align-items:center; gap:6px; }
-    .switch input { transform: translateY(1px); }
+    .group { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .field { display:flex; flex-direction:column; gap:4px; }
+    .field label { font-size:12px; opacity:.85; }
+    .field input {
+      width: 88px; padding:6px 8px; border-radius:8px; border:1px solid #2b2b2b; background:#101010; color:#f0f0f0;
+    }
+    .btn { appearance:none; border:0; padding:8px 12px; border-radius:10px; cursor:pointer; font-weight:700; background:#1f2937; color:#fff; }
+    .btn:hover { background:#243244; }
+    .pill { font-size:12px; padding:4px 8px; border-radius:999px; background:#111827; border:1px solid #2a3340; }
 
-    #loading { position: absolute; inset: 0; z-index: 19; display:flex; align-items:center; justify-content:center;
-      background: radial-gradient(ellipse at center, rgba(0,0,0,.65) 0%, rgba(0,0,0,.85) 60%); }
-    .spinner { width: 86px; height: 86px; border-radius: 50%; border: 8px solid rgba(255,255,255,.2); border-top-color: #fff; animation: spin 1s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    #overlay { position:absolute; inset:0; z-index:25; pointer-events:none; }
+    #routeLayer { position:absolute; inset:0; }
+    #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
 
-    #ai-overlay { position:absolute; inset:0; pointer-events:none; z-index:21; font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
-    #srcBadge { position:absolute; left:12px; bottom:12px; z-index: 22; padding:4px 8px; border-radius:12px; background:#1f2937; color:#fff; opacity:.85; font:12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    #loading { position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:40;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,.65) 0%, rgba(0,0,0,.85) 65%); }
+    .spinner { width: 80px; height:80px; border-radius:50%; border:8px solid rgba(255,255,255,.25); border-top-color:#fff; animation:spin 1s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -35,216 +42,204 @@
     <iframe id="mp" allow="fullscreen; xr-spatial-tracking" allowfullscreen src=""></iframe>
 
     <div id="hud" role="toolbar" aria-label="Controls">
-      <button class="btn" id="btnDollhouse">Dollhouse start</button>
-      <button class="btn" id="btnInside">Inside start</button>
+      <div class="group">
+        <span class="pill">Mode: Route (Phase 1)</span>
+        <button class="btn" id="btnFullscreen">Fullscreen</button>
+      </div>
 
-      <label class="switch"><input type="checkbox" id="chkBrand" checked /><span>Hide branding</span></label>
-      <label class="switch"><input type="checkbox" id="chkQuiet"  checked /><span>Quiet UI</span></label>
-      <label class="switch"><input type="checkbox" id="chkAutoplay" checked /><span>Autoplay</span></label>
+      <div class="group" style="gap:16px; border-left:1px solid #2a2a2a; padding-left:12px;">
+        <div class="field">
+          <label>Start X (m)</label>
+          <input id="sx" type="number" step="0.1" value="0">
+        </div>
+        <div class="field">
+          <label>Start Y (m)</label>
+          <input id="sy" type="number" step="0.1" value="0">
+        </div>
+        <div class="field">
+          <label>Goal X (m)</label>
+          <input id="gx" type="number" step="0.1" value="20">
+        </div>
+        <div class="field">
+          <label>Goal Y (m)</label>
+          <input id="gy" type="number" step="0.1" value="10">
+        </div>
+        <button class="btn" id="btnRoute">Compute Route</button>
+      </div>
 
-      <button class="btn" id="btnApply">Apply</button>
-      <button class="btn" id="btnFullscreen">Fullscreen</button>
+      <div id="stats" class="pill">Length: —</div>
+    </div>
 
-      <button class="btn" id="btnAnalyze" title="Hotkey: A">Analyze (AI)</button>
+    <div id="overlay">
+      <canvas id="routeLayer"></canvas>
+      <div id="legend">Route overlay scaled to site bounds (not yet georegistered to view)</div>
     </div>
 
     <div id="loading"><div class="spinner" aria-label="Loading"></div></div>
-    <div id="ai-overlay" aria-hidden="true"></div>
-    <div id="srcBadge">Source: Local</div>
   </div>
 
   <script>
     /********* CONFIG *********/
     const MODEL  = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
-    const BACKEND_URL = "https://assuming-troubleshooting-path-knitting.trycloudflare.com"; // update if your tunnel changes
     const BUNDLE_PATH = "bundle/dist/showcase.html";
+    // IMPORTANT: set this to your current tunnel or local dev server
+    const BACKEND_URL = "https://contributed-vocal-seo-pts.trycloudflare.com";
 
-    const mp  = document.getElementById("mp");
+    /********* STATE *********/
+    const mp   = document.getElementById("mp");
     const wrap = document.getElementById("wrap");
-    const overlay = document.getElementById("ai-overlay");
+    const cvs  = document.getElementById("routeLayer");
+    const ctx  = cvs.getContext("2d");
+    const loading = document.getElementById("loading");
+    const stats   = document.getElementById("stats");
 
-    const btnD = document.getElementById("btnDollhouse");
-    const btnI = document.getElementById("btnInside");
-    const btnApply = document.getElementById("btnApply");
-    const btnFS = document.getElementById("btnFullscreen");
-    const btnAnalyze = document.getElementById("btnAnalyze");
+    // site meta for consistent scaling
+    let SITE_BBOX = null; // {min:[x,y], max:[x,y]}
+    let SCALE = {s:1, offx:0, offy:0}; // computed from bbox and canvas
 
-    const chkBrand = document.getElementById("chkBrand");
-    const chkQuiet = document.getElementById("chkQuiet");
-    const chkAuto  = document.getElementById("chkAutoplay");
+    function setLoading(on){ loading.style.display = on ? "flex" : "none"; }
 
-    const info= console.info.bind(console, "[app]");
-    const warn= console.warn.bind(console, "[app]");
-
-    const $loading = document.getElementById("loading");
-    function setLoading(on){ if($loading) $loading.style.display = on ? "flex" : "none"; }
-    function setSourceBadge(text){ const b=document.getElementById("srcBadge"); if(b) b.textContent=`Source: ${text}`; }
-
-    function buildShowcaseUrl(start="") {
-      const brand = chkBrand.checked ? 0 : 1;
-      const quiet = chkQuiet.checked ? 1 : 0;
-      const play  = chkAuto.checked  ? 1 : 0;
-      const base = `${BUNDLE_PATH}?m=${encodeURIComponent(MODEL)}&applicationKey=${encodeURIComponent(APPKEY)}&brand=${brand}&qs=${quiet}&play=${play}&q=18`;
-      return start ? `${base}&start=${encodeURIComponent(start)}` : base;
+    function buildShowcaseUrl() {
+      return `${BUNDLE_PATH}?m=${encodeURIComponent(MODEL)}&applicationKey=${encodeURIComponent(APPKEY)}&brand=0&qs=1&play=1&q=18`;
     }
 
-    async function connectShowcase(timeoutMs=15000){
-      const t0=performance.now();
-      while(performance.now()-t0<timeoutMs){
-        try{
-          const w=mp.contentWindow;
-          if(w?.MP_SDK?.connect){
-            const sdk=await w.MP_SDK.connect(w, APPKEY);
-            window._mpSdk=sdk;
-            info("SDK connected");
-            setLoading(false);
-            return sdk;
-          }
-        }catch(e){}
-        await new Promise(r=>setTimeout(r,200));
-      }
-      throw new Error("Timed out waiting for MP_SDK.connect");
+    function fitFromBBox() {
+      const W = cvs.width, H = cvs.height;
+      if (!SITE_BBOX) { SCALE = {s:1, offx:0, offy:0}; return; }
+
+      const [minx, miny] = SITE_BBOX.min;
+      const [maxx, maxy] = SITE_BBOX.max;
+      const pad = 30;
+
+      const rw = Math.max(1e-6, maxx - minx);
+      const rh = Math.max(1e-6, maxy - miny);
+
+      const sx = (W - 2*pad) / rw;
+      const sy = (H - 2*pad) / rh;
+      const s  = Math.min(sx, sy);
+
+      const offx = pad - minx*s + (W - 2*pad - rw*s)/2;
+      const offy = pad - miny*s + (H - 2*pad - rh*s)/2;
+
+      SCALE = {s, offx, offy};
     }
 
-    function initialLoad(){ setLoading(true); setSourceBadge("Local"); mp.src=buildShowcaseUrl(""); afterIframeSrcSet(); }
-    async function afterIframeSrcSet(){ try{ await connectShowcase(15000); }catch(e){ warn("MP_SDK connect failed:", e.message); } }
-
-    btnD.addEventListener("click",()=>{ mp.src=buildShowcaseUrl("dollhouse"); afterIframeSrcSet(); });
-    btnI.addEventListener("click",()=>{ mp.src=buildShowcaseUrl("inside");    afterIframeSrcSet(); });
-    btnApply.addEventListener("click",()=>{ mp.src=buildShowcaseUrl("");      afterIframeSrcSet(); });
-    btnFS.addEventListener("click",async()=>{ try{ await (wrap.requestFullscreen?.()||wrap.webkitRequestFullscreen?.()); }catch(_){} });
-
-    window.addEventListener("keydown",(ev)=>{ if(ev.key.toLowerCase()==="a"){ ev.preventDefault(); btnAnalyze.click(); } });
-
-    /* ===== Screenshot capture with robust fallbacks ===== */
-    async function blobToDataURL(blob){
-      return await new Promise(res => { const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.readAsDataURL(blob); });
+    function worldToCanvas(x, y) {
+      // Y-up (meters) -> canvas pixels with Y down
+      const W = cvs.width, H = cvs.height;
+      const {s, offx, offy} = SCALE;
+      const px =  x*s + offx;
+      const py =  H - (y*s + offy);
+      return [px, py];
     }
 
-    async function getIframeSnapshotDataUrl() {
-      try {
-        const iframe = document.getElementById("mp");
-        const url = new URL(iframe.src);
-        url.searchParams.set("screenshot", "1");
-        url.searchParams.set("w", "1280");
-        const resp = await fetch(url.toString(), { mode: "cors" });
-        if (!resp.ok) throw new Error("snapshot fetch failed");
-        const blob = await resp.blob();
-        if (!blob.type.startsWith("image/")) throw new Error("not an image");
-        return await blobToDataURL(blob);
-      } catch (e) {
-        console.warn("Iframe snapshot fallback failed:", e?.message || e);
-        return null;
-      }
+    function resizeCanvas(){
+      cvs.width  = wrap.clientWidth;
+      cvs.height = wrap.clientHeight;
+      fitFromBBox();
+      if (window._lastRoute) drawRoute(window._lastRoute);
     }
+    window.addEventListener("resize", resizeCanvas);
 
-    async function getScreenshotDataUrl(sdk) {
-      const tryConvert = async (out) => {
-        if (!out) return null;
-        if (out instanceof Blob) return await blobToDataURL(out);
-        if (typeof out === "string" && out.startsWith("data:image")) return out;
-        if (out instanceof Uint8Array) return await blobToDataURL(new Blob([out], { type: "image/jpeg" }));
-        if (out instanceof ArrayBuffer) return await blobToDataURL(new Blob([new Uint8Array(out)], { type: "image/jpeg" }));
-        return null;
-      };
+    function drawRoute(route){
+      const W = cvs.width, H = cvs.height;
+      ctx.clearRect(0,0,W,H);
+      if(!route || route.length < 2) return;
 
-      try {
-        // 1) Renderer API (try all known signatures)
-        if (sdk?.Renderer?.takeScreenShot) {
-          try {
-            const out = await sdk.Renderer.takeScreenShot({ resolution: { width: 1280, height: 720 } });
-            const url = await tryConvert(out); if (url) return url;
-          } catch (e) { console.warn("Renderer.takeScreenShot object-style failed:", e?.message || e); }
+      ctx.lineWidth = 4;
+      ctx.lineJoin = "round";
+      ctx.lineCap  = "round";
 
-          try {
-            const out = await sdk.Renderer.takeScreenShot(1280, 720);
-            const url = await tryConvert(out); if (url) return url;
-          } catch (e) { console.warn("Renderer.takeScreenShot tuple-style failed:", e?.message || e); }
+      // path
+      ctx.beginPath();
+      route.forEach(([x,y], i)=>{
+        const [px,py] = worldToCanvas(x,y);
+        if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+      });
+      ctx.strokeStyle = "#22c55e";
+      ctx.stroke();
 
-          try {
-            const out = await sdk.Renderer.takeScreenShot({ width: 1280, height: 720 });
-            const url = await tryConvert(out); if (url) return url;
-          } catch (e) { console.warn("Renderer.takeScreenShot simple-options failed:", e?.message || e); }
-        }
-
-        // 2) Scene API (v5+ often Blob)
-        if (sdk?.Scene?.captureScreenshot) {
-          try {
-            const out = await sdk.Scene.captureScreenshot({ width: 1280, height: 720 });
-            const url = await tryConvert(out); if (url) return url;
-          } catch (e) { console.warn("Scene.captureScreenshot failed:", e?.message || e); }
-        }
-
-        // 3) Camera API (older builds)
-        if (sdk?.Camera?.takeScreenShot) {
-          try {
-            const out = await sdk.Camera.takeScreenShot(1280, 720);
-            const url = await tryConvert(out); if (url) return url;
-          } catch (e) { console.warn("Camera.takeScreenShot tuple-style failed:", e?.message || e); }
-
-          try {
-            const out = await sdk.Camera.takeScreenShot({ width: 1280, height: 720 });
-            const url = await tryConvert(out); if (url) return url;
-          } catch (e) { console.warn("Camera.takeScreenShot object-style failed:", e?.message || e); }
-        }
-      } catch (e) {
-        console.warn("Screenshot capture threw:", e?.message || e);
-      }
-
-      console.warn("Screenshot capture failed (no usable output) — using iframe snapshot");
-      return await getIframeSnapshotDataUrl();
-    }
-
-    function clearOverlay(){ overlay.innerHTML=""; }
-    function renderBoxes(out){
-      clearOverlay();
-      const W=wrap.clientWidth, H=wrap.clientHeight;
-      const imgW=out.imageWidth||1280, imgH=out.imageHeight||720;
-      const sx=W/imgW, sy=H/imgH;
-      (out.boxes||[]).forEach(b=>{
-        const el=document.createElement("div");
-        el.style.position="absolute";
-        el.style.left=(b.x*sx)+"px"; el.style.top=(b.y*sy)+"px";
-        el.style.width=(b.w*sx)+"px"; el.style.height=(b.h*sy)+"px";
-        el.style.border="2px solid #00ff88"; el.style.borderRadius="4px"; el.style.boxShadow="0 0 6px rgba(0,255,136,.6)";
-        overlay.appendChild(el);
-        const tag=document.createElement("div");
-        tag.textContent=`${b.label ?? "obj"} ${Math.round((b.score ?? 0)*100)}%`;
-        tag.style.position="absolute";
-        tag.style.left=(b.x*sx)+"px"; tag.style.top=(b.y*sy-20)+"px";
-        tag.style.padding="2px 6px"; tag.style.font="12px/18px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif";
-        tag.style.background="rgba(0,0,0,.7)"; tag.style.color="#00ff88"; tag.style.border="1px solid #00ff88"; tag.style.borderRadius="4px";
-        overlay.appendChild(tag);
+      // endpoints
+      const endpoints = [
+        {p:route[0], color:"#3b82f6", label:"Start"},
+        {p:route[route.length-1], color:"#ef4444", label:"Exit"}
+      ];
+      ctx.font = "12px system-ui";
+      endpoints.forEach(({p,color,label})=>{
+        const [px,py] = worldToCanvas(p[0], p[1]);
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#e5e7eb";
+        ctx.fillText(label, px+8, py-8);
       });
     }
 
-    async function analyze(){
-      btnAnalyze.disabled=true; btnAnalyze.textContent="Analyzing…"; setLoading(true);
+    async function fetchSiteMeta(){
       try{
-        const sdk = window._mpSdk || await connectShowcase(12000);
-        const dataUrl = await getScreenshotDataUrl(sdk); // may be null (but we try hard not to)
-        let pose=null; try{ pose = await sdk.Camera?.getPose?.(); }catch(_){}
-        const payload={ spaceId: MODEL, image: dataUrl, pose };
+        const r = await fetch(`${BACKEND_URL}/site/meta`);
+        if(!r.ok) return; // optional endpoint
+        const meta = await r.json();
+        if (meta && meta.bbox_xy && meta.bbox_xy.min && meta.bbox_xy.max) {
+          SITE_BBOX = { min: meta.bbox_xy.min, max: meta.bbox_xy.max };
+        }
+      }catch(_) { /* optional; ignore */ }
+    }
 
-        const res = await fetch(`${BACKEND_URL}/infer`, {
+    async function computeRoute(){
+      const sx = parseFloat(document.getElementById("sx").value);
+      const sy = parseFloat(document.getElementById("sy").value);
+      const gx = parseFloat(document.getElementById("gx").value);
+      const gy = parseFloat(document.getElementById("gy").value);
+
+      setLoading(true);
+      try{
+        const res = await fetch(`${BACKEND_URL}/route`, {
           method:"POST",
-          headers:{ "Content-Type":"application/json" },
-          body: JSON.stringify(payload),
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ start:{x:sx,y:sy}, goal:{x:gx,y:gy} })
         });
-        if(!res.ok) throw new Error(`Backend ${res.status}`);
+        if(!res.ok){
+          const txt = await res.text();
+          throw new Error(`Route error ${res.status}: ${txt}`);
+        }
         const out = await res.json();
-        renderBoxes(out || {});
+
+        // If no site bbox yet, fallback to fit using route extents
+        if (!SITE_BBOX && out.route?.length >= 2) {
+          const xs = out.route.map(p=>p[0]);
+          const ys = out.route.map(p=>p[1]);
+          SITE_BBOX = {
+            min: [Math.min(...xs), Math.min(...ys)],
+            max: [Math.max(...xs), Math.max(...ys)]
+          };
+          fitFromBBox();
+        }
+
+        window._lastRoute = out.route;
+        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m`;
+        drawRoute(out.route);
       }catch(e){
-        clearOverlay(); console.warn("[app] Analyze failed:", e.message); alert("Analyze failed: "+e.message);
+        alert(e.message || e);
       }finally{
-        setLoading(false); btnAnalyze.disabled=false; btnAnalyze.textContent="Analyze (AI)";
+        setLoading(false);
       }
     }
 
-    // Kick it off
-    initialLoad();
-    document.getElementById("btnAnalyze").addEventListener("click", analyze);
+    // UI wiring
+    document.getElementById("btnRoute").addEventListener("click", computeRoute);
+    document.getElementById("btnFullscreen").addEventListener("click", async()=>{
+      try{ await (wrap.requestFullscreen?.() || wrap.webkitRequestFullscreen?.()); }catch(_) {}
+    });
+
+    // Kickoff
+    (async function init(){
+      mp.src = buildShowcaseUrl();
+      resizeCanvas();
+      await fetchSiteMeta(); // pull bbox; harmless if endpoint is missing
+      fitFromBBox();
+      if (window._lastRoute) drawRoute(window._lastRoute);
+    })();
   </script>
 </body>
 </html>
