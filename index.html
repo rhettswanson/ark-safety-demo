@@ -57,11 +57,10 @@
     /********* CONFIG *********/
     const MODEL  = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
-    const BACKEND_URL = "https://compute-freeware-planet-curious.trycloudflare.com"; // ← your live tunnel
+    const BACKEND_URL = "https://compute-freeware-planet-curious.trycloudflare.com"; // update if your tunnel changes
     const BUNDLE_PATH = "bundle/dist/showcase.html";
 
     const mp  = document.getElementById("mp");
-    const hud = document.getElementById("hud");
     const wrap = document.getElementById("wrap");
     const overlay = document.getElementById("ai-overlay");
 
@@ -75,7 +74,6 @@
     const chkQuiet = document.getElementById("chkQuiet");
     const chkAuto  = document.getElementById("chkAutoplay");
 
-    const log = console.log.bind(console, "[app]");
     const info= console.info.bind(console, "[app]");
     const warn= console.warn.bind(console, "[app]");
 
@@ -124,44 +122,79 @@
       return await new Promise(res => { const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.readAsDataURL(blob); });
     }
 
-    async function getScreenshotDataUrl(sdk) {
-  try {
-    if (sdk?.Renderer?.takeScreenShot) {
-      const out = await sdk.Renderer.takeScreenShot(1280, 720);
-
-      // Case 1: Blob
-      if (out instanceof Blob) {
-        return await blobToDataURL(out);
-      }
-
-      // Case 2: String (already data URL)
-      if (typeof out === "string" && out.startsWith("data:image")) {
-        return out;
-      }
-
-      // Case 3: Raw bytes (Uint8Array / ArrayBuffer)
-      if (out instanceof Uint8Array || out instanceof ArrayBuffer) {
-        const blob = new Blob([out], { type: "image/jpeg" });
+    async function getIframeSnapshotDataUrl() {
+      try {
+        const iframe = document.getElementById("mp");
+        const url = new URL(iframe.src);
+        url.searchParams.set("screenshot", "1");
+        url.searchParams.set("w", "1280");
+        const resp = await fetch(url.toString(), { mode: "cors" });
+        if (!resp.ok) throw new Error("snapshot fetch failed");
+        const blob = await resp.blob();
+        if (!blob.type.startsWith("image/")) throw new Error("not an image");
         return await blobToDataURL(blob);
+      } catch (e) {
+        console.warn("Iframe snapshot fallback failed:", e?.message || e);
+        return null;
       }
     }
 
-    if (sdk?.Scene?.captureScreenshot) {
-      const blob = await sdk.Scene.captureScreenshot({ width: 1280, height: 720 });
-      if (blob instanceof Blob) return await blobToDataURL(blob);
-    }
+    async function getScreenshotDataUrl(sdk) {
+      const tryConvert = async (out) => {
+        if (!out) return null;
+        if (out instanceof Blob) return await blobToDataURL(out);
+        if (typeof out === "string" && out.startsWith("data:image")) return out;
+        if (out instanceof Uint8Array) return await blobToDataURL(new Blob([out], { type: "image/jpeg" }));
+        if (out instanceof ArrayBuffer) return await blobToDataURL(new Blob([new Uint8Array(out)], { type: "image/jpeg" }));
+        return null;
+      };
 
-    if (sdk?.Camera?.takeScreenShot) {
-      const out = await sdk.Camera.takeScreenShot(1280, 720);
-      if (out instanceof Blob) return await blobToDataURL(out);
-      if (typeof out === "string" && out.startsWith("data:image")) return out;
+      try {
+        // 1) Renderer API (try all known signatures)
+        if (sdk?.Renderer?.takeScreenShot) {
+          try {
+            const out = await sdk.Renderer.takeScreenShot({ resolution: { width: 1280, height: 720 } });
+            const url = await tryConvert(out); if (url) return url;
+          } catch (e) { console.warn("Renderer.takeScreenShot object-style failed:", e?.message || e); }
+
+          try {
+            const out = await sdk.Renderer.takeScreenShot(1280, 720);
+            const url = await tryConvert(out); if (url) return url;
+          } catch (e) { console.warn("Renderer.takeScreenShot tuple-style failed:", e?.message || e); }
+
+          try {
+            const out = await sdk.Renderer.takeScreenShot({ width: 1280, height: 720 });
+            const url = await tryConvert(out); if (url) return url;
+          } catch (e) { console.warn("Renderer.takeScreenShot simple-options failed:", e?.message || e); }
+        }
+
+        // 2) Scene API (v5+ often Blob)
+        if (sdk?.Scene?.captureScreenshot) {
+          try {
+            const out = await sdk.Scene.captureScreenshot({ width: 1280, height: 720 });
+            const url = await tryConvert(out); if (url) return url;
+          } catch (e) { console.warn("Scene.captureScreenshot failed:", e?.message || e); }
+        }
+
+        // 3) Camera API (older builds)
+        if (sdk?.Camera?.takeScreenShot) {
+          try {
+            const out = await sdk.Camera.takeScreenShot(1280, 720);
+            const url = await tryConvert(out); if (url) return url;
+          } catch (e) { console.warn("Camera.takeScreenShot tuple-style failed:", e?.message || e); }
+
+          try {
+            const out = await sdk.Camera.takeScreenShot({ width: 1280, height: 720 });
+            const url = await tryConvert(out); if (url) return url;
+          } catch (e) { console.warn("Camera.takeScreenShot object-style failed:", e?.message || e); }
+        }
+      } catch (e) {
+        console.warn("Screenshot capture threw:", e?.message || e);
+      }
+
+      console.warn("Screenshot capture failed (no usable output) — using iframe snapshot");
+      return await getIframeSnapshotDataUrl();
     }
-  } catch (e) {
-    console.warn("Screenshot capture failed:", e?.message || e);
-  }
-  console.warn("Screenshot capture failed (no usable output)");
-  return null;
-}
 
     function clearOverlay(){ overlay.innerHTML=""; }
     function renderBoxes(out){
@@ -190,11 +223,10 @@
       btnAnalyze.disabled=true; btnAnalyze.textContent="Analyzing…"; setLoading(true);
       try{
         const sdk = window._mpSdk || await connectShowcase(12000);
-        const dataUrl = await getScreenshotDataUrl(sdk); // may be null
+        const dataUrl = await getScreenshotDataUrl(sdk); // may be null (but we try hard not to)
         let pose=null; try{ pose = await sdk.Camera?.getPose?.(); }catch(_){}
         const payload={ spaceId: MODEL, image: dataUrl, pose };
 
-        // Post to your backend /infer (same as before):contentReference[oaicite:1]{index=1}
         const res = await fetch(`${BACKEND_URL}/infer`, {
           method:"POST",
           headers:{ "Content-Type":"application/json" },
@@ -204,14 +236,15 @@
         const out = await res.json();
         renderBoxes(out || {});
       }catch(e){
-        clearOverlay(); warn("Analyze failed:", e.message); alert("Analyze failed: "+e.message);
+        clearOverlay(); console.warn("[app] Analyze failed:", e.message); alert("Analyze failed: "+e.message);
       }finally{
         setLoading(false); btnAnalyze.disabled=false; btnAnalyze.textContent="Analyze (AI)";
       }
     }
 
-    btnAnalyze.addEventListener("click", analyze);
+    // Kick it off
     initialLoad();
+    document.getElementById("btnAnalyze").addEventListener("click", analyze);
   </script>
 </body>
 </html>
