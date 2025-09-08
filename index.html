@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>Ark Active Threat – Phase 1</title>
+  <title>Ark Active Threat – Phase 1 (SDK)</title>
   <style>
     :root { color-scheme: light dark; }
     html, body { height: 100%; margin: 0; }
@@ -31,7 +31,7 @@
     #routeLayer { position:absolute; inset:0; }
     #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
 
-    #loading { position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:40;
+    #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:40;
       background: radial-gradient(ellipse at center, rgba(0,0,0,.65) 0%, rgba(0,0,0,.85) 65%); }
     .spinner { width: 80px; height:80px; border-radius:50%; border:8px solid rgba(255,255,255,.25); border-top-color:#fff; animation:spin 1s linear infinite; }
     @keyframes spin { to { transform:rotate(360deg); } }
@@ -82,9 +82,13 @@
     /********* CONFIG *********/
     const MODEL  = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
-    const BUNDLE_PATH = "https://static.matterport.com/showcase-sdk/latest/showcase.html";
-    // IMPORTANT: set this to your current tunnel or local dev server
-    const BACKEND_URL = "https://contributed-vocal-seo-pts.trycloudflare.com";
+    const BUNDLE_PATH = "bundle/dist/showcase.html";   // <- SDK bundle from your repo
+    const BACKEND_URL = "https://contributed-vocal-seo-pts.trycloudflare.com"; // update if tunnel changes
+
+    /********* SMALL LOG HELPERS *********/
+    const info  = (...a)=>console.log("[app]", ...a);
+    const warn  = (...a)=>console.warn("[app]", ...a);
+    const error = (...a)=>console.error("[app]", ...a);
 
     /********* STATE *********/
     const mp   = document.getElementById("mp");
@@ -94,20 +98,40 @@
     const loading = document.getElementById("loading");
     const stats   = document.getElementById("stats");
 
-    // site meta for consistent scaling
-    let SITE_BBOX = null; // {min:[x,y], max:[x,y]}
-    let SCALE = {s:1, offx:0, offy:0}; // computed from bbox and canvas
+    let SITE_BBOX = null;        // {min:[x,y], max:[x,y]}
+    let SCALE     = {s:1, offx:0, offy:0}; // meters->pixels
+    let _sdk      = null;
 
     function setLoading(on){ loading.style.display = on ? "flex" : "none"; }
 
     function buildShowcaseUrl() {
+      // brand=0 (hide logo), qs=1 (quickstart), play=1 (autoplay), q=18 (quality)
       return `${BUNDLE_PATH}?m=${encodeURIComponent(MODEL)}&applicationKey=${encodeURIComponent(APPKEY)}&brand=0&qs=1&play=1&q=18`;
     }
 
+    /** Waits for the iframe to expose MP_SDK.connect and connects with APPKEY */
+    async function connectShowcase(timeoutMs = 15000) {
+      const t0 = performance.now();
+      while (performance.now() - t0 < timeoutMs) {
+        try {
+          const w = mp.contentWindow;
+          if (w?.MP_SDK?.connect) {
+            const sdk = await w.MP_SDK.connect(w, APPKEY);
+            window._mpSdk = _sdk = sdk;
+            info("SDK connected");
+            setLoading(false);
+            return sdk;
+          }
+        } catch(e) { /* retry loop */ }
+        await new Promise(r=>setTimeout(r, 200));
+      }
+      throw new Error("Timed out waiting for MP_SDK.connect");
+    }
+
+    /********* FIT + DRAW *********/
     function fitFromBBox() {
       const W = cvs.width, H = cvs.height;
       if (!SITE_BBOX) { SCALE = {s:1, offx:0, offy:0}; return; }
-
       const [minx, miny] = SITE_BBOX.min;
       const [maxx, maxy] = SITE_BBOX.max;
       const pad = 30;
@@ -126,11 +150,10 @@
     }
 
     function worldToCanvas(x, y) {
-      // Y-up (meters) -> canvas pixels with Y down
       const W = cvs.width, H = cvs.height;
       const {s, offx, offy} = SCALE;
       const px =  x*s + offx;
-      const py =  H - (y*s + offy);
+      const py =  H - (y*s + offy);   // Y-up meters -> Y-down pixels
       return [px, py];
     }
 
@@ -151,7 +174,6 @@
       ctx.lineJoin = "round";
       ctx.lineCap  = "round";
 
-      // path
       ctx.beginPath();
       route.forEach(([x,y], i)=>{
         const [px,py] = worldToCanvas(x,y);
@@ -160,7 +182,6 @@
       ctx.strokeStyle = "#22c55e";
       ctx.stroke();
 
-      // endpoints
       const endpoints = [
         {p:route[0], color:"#3b82f6", label:"Start"},
         {p:route[route.length-1], color:"#ef4444", label:"Exit"}
@@ -178,12 +199,12 @@
     async function fetchSiteMeta(){
       try{
         const r = await fetch(`${BACKEND_URL}/site/meta`);
-        if(!r.ok) return; // optional endpoint
+        if(!r.ok) return;
         const meta = await r.json();
         if (meta && meta.bbox_xy && meta.bbox_xy.min && meta.bbox_xy.max) {
           SITE_BBOX = { min: meta.bbox_xy.min, max: meta.bbox_xy.max };
         }
-      }catch(_) { /* optional; ignore */ }
+      }catch(_) { /* optional */ }
     }
 
     async function computeRoute(){
@@ -205,7 +226,6 @@
         }
         const out = await res.json();
 
-        // If no site bbox yet, fallback to fit using route extents
         if (!SITE_BBOX && out.route?.length >= 2) {
           const xs = out.route.map(p=>p[0]);
           const ys = out.route.map(p=>p[1]);
@@ -234,11 +254,26 @@
 
     // Kickoff
     (async function init(){
-      mp.src = buildShowcaseUrl();
+      setLoading(true);
       resizeCanvas();
-      await fetchSiteMeta(); // pull bbox; harmless if endpoint is missing
+
+      // 1) load Showcase bundle
+      mp.src = buildShowcaseUrl();
+
+      // 2) as soon as the iframe finishes loading, connect the SDK
+      mp.addEventListener("load", async () => {
+        try {
+          await connectShowcase(15000);  // sets window._mpSdk on success
+        } catch (e) {
+          error(e);
+          // Keep UI usable even if SDK connect fails; overlay will still work
+          setLoading(false);
+        }
+      }, { once:true });
+
+      // 3) pull site bbox for consistent scaling
+      await fetchSiteMeta();
       fitFromBBox();
-      if (window._lastRoute) drawRoute(window._lastRoute);
     })();
   </script>
 </body>
