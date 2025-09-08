@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>Ark Active Threat – Phase 1 (SDK)</title>
+  <title>Ark Active Threat – Phase 1.1 (SDK)</title>
   <style>
     :root { color-scheme: light dark; }
     html, body { height: 100%; margin: 0; }
@@ -18,46 +18,43 @@
       box-shadow: 0 6px 20px rgba(0,0,0,.35);
     }
     .group { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .field {
-      display:flex; flex-direction:column; gap:6px; font-size:12px;
-      background:rgba(255,255,255,.04); padding:8px 10px; border-radius:8px;
-    }
+    .field { display:flex; flex-direction:column; gap:4px; }
+    .field label { font-size:12px; opacity:.85; }
     .field input {
-      all: unset; padding:6px 8px; border-radius:6px; background: rgba(255,255,255,.06);
-      outline: 1px solid rgba(255,255,255,.12); font-size: 13px; width: 110px;
+      width: 88px; padding:6px 8px; border-radius:8px; border:1px solid #2b2b2b; background:#101010; color:#f0f0f0;
     }
-    .btn {
-      all: unset; cursor: pointer; font-weight:600; padding:8px 12px; border-radius:8px;
-      background: linear-gradient(180deg, #2a2a2a, #181818); outline:1px solid rgba(255,255,255,.16);
-    }
-    .btn:active { transform: translateY(1px); }
-    .pill {
-      background: rgba(255,255,255,.06); padding:8px 10px; border-radius:9999px; font-size:12px;
-      outline:1px solid rgba(255,255,255,.12);
-      display:inline-flex; align-items:center; gap:8px;
-    }
+    .btn { appearance:none; border:0; padding:8px 12px; border-radius:10px; cursor:pointer; font-weight:700; background:#1f2937; color:#fff; }
+    .btn:hover { background:#243244; }
+    .pill { font-size:12px; padding:4px 8px; border-radius:999px; background:#111827; border:1px solid #2a3340; }
 
-    #overlay { position:absolute; inset:0; pointer-events:none; }
-    #routeLayer { position:absolute; inset:0; width:100%; height:100%; pointer-events:auto; }
-    #legend {
-      position:absolute; right:10px; bottom:10px; z-index:25; font-size:12px; opacity:.75;
-      background: rgba(0,0,0,.5); padding:6px 8px; border-radius:8px; outline:1px solid rgba(255,255,255,.12);
-    }
+    #overlay { position:absolute; inset:0; z-index:25; pointer-events:none; }
+    #routeLayer { position:absolute; inset:0; }
+    #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
 
-    #loading {
-      position:absolute; inset:0; display:grid; place-items:center; z-index:40; pointer-events:none;
-      background: radial-gradient(80% 80% at 50% 20%, rgba(255,255,255,.08), transparent 70%);
-    }
+    #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:40;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,.65) 0%, rgba(0,0,0,.85) 65%); }
+    .spinner { width: 80px; height:80px; border-radius:50%; border:8px solid rgba(255,255,255,.25); border-top-color:#fff; animation:spin 1s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
   </style>
 </head>
 <body>
   <div id="wrap">
-    <iframe id="mp" title="Matterport" allow="vr; xr; fullscreen"></iframe>
+    <iframe id="mp" allow="fullscreen; xr-spatial-tracking" allowfullscreen src=""></iframe>
 
     <div id="hud" role="toolbar" aria-label="Controls">
       <div class="group">
-        <span class="pill">Mode: Route (Phase 1)</span>
+        <span class="pill">Phase 1.1</span>
         <button class="btn" id="btnFullscreen">Fullscreen</button>
+        <button class="btn" id="btnReset">Reset</button>
+      </div>
+
+      <div class="group" style="gap:16px; border-left:1px solid #2a2a2a; padding-left:12px;">
+        <label class="pill" style="display:flex;gap:8px;align-items:center">
+          <input id="captureMode" type="checkbox" />
+          Capture Mode (Shift+Click exits/shelters)
+        </label>
+        <button class="btn" id="btnSaveDest">Save to Server</button>
+        <button class="btn" id="btnDownloadDest">Download JSON</button>
       </div>
 
       <div class="group" style="gap:16px; border-left:1px solid #2a2a2a; padding-left:12px;">
@@ -69,24 +66,7 @@
           <label>Start Y (m)</label>
           <input id="sy" type="number" step="0.1" value="0">
         </div>
-        <div class="field">
-          <label>Goal X (m)</label>
-          <input id="gx" type="number" step="0.1" value="20">
-        </div>
-        <div class="field">
-          <label>Goal Y (m)</label>
-          <input id="gy" type="number" step="0.1" value="10">
-        </div>
-        <button class="btn" id="btnRoute">Compute Route</button>
-      </div>
-
-      <!-- NEW: capture + export + reset -->
-      <div class="group" style="gap:12px; border-left:1px solid #2a2a2a; padding-left:12px;">
-        <label class="pill" title="Hold Shift and click on the plan to capture a point">
-          <input id="captureMode" type="checkbox" /> Capture Mode
-        </label>
-        <button class="btn" id="btnDownloadDest">Download destinations.json</button>
-        <button class="btn" id="btnReset">Reset Overlay</button>
+        <button class="btn" id="btnRouteTest">Manual Test Route</button>
       </div>
 
       <div id="stats" class="pill">Length: —</div>
@@ -94,36 +74,70 @@
 
     <div id="overlay">
       <canvas id="routeLayer"></canvas>
-      <div id="legend">Route overlay scaled to site bounds (not yet georegistered to view)</div>
+      <div id="legend">World-anchored overlay (scaled to navgraph XY)</div>
     </div>
 
-    <div id="loading">
-      <div class="pill">Loading…</div>
-    </div>
+    <div id="loading"><div class="spinner" aria-label="Loading"></div></div>
   </div>
 
   <script>
-    // ---------- DOM ----------
-    const wrap = document.getElementById("wrap");
+    /********* CONFIG *********/
+    const MODEL  = "1ghABoaBFPZ";
+    const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
+    const BUNDLE_PATH = "bundle/dist/showcase.html";   // SDK bundle
+    const BACKEND_URL = "https://contributed-vocal-seo-pts.trycloudflare.com";
+
+    /********* LOGGING *********/
+    const info  = (...a)=>console.log("[app]", ...a);
+    const warn  = (...a)=>console.warn("[app]", ...a);
+    const error = (...a)=>console.error("[app]", ...a);
+
+    /********* STATE *********/
     const mp   = document.getElementById("mp");
+    const wrap = document.getElementById("wrap");
     const cvs  = document.getElementById("routeLayer");
     const ctx  = cvs.getContext("2d");
     const loading = document.getElementById("loading");
     const stats   = document.getElementById("stats");
+    const btnReset = document.getElementById("btnReset");
+    const btnRouteTest = document.getElementById("btnRouteTest");
+    const captureToggle = document.getElementById("captureMode");
 
-    let SITE_BBOX = null;        // {min:[x,y], max:[x,y]}
-    let SCALE     = { s:1, offx:0, offy:0 };
+    let SITE_BBOX = null;                // {min:[x,y], max:[x,y]}
+    let SCALE     = {s:1, offx:0, offy:0}; // meters->pixels
+    let _sdk      = null;
 
-    // ---------- Utils ----------
-    const info  = (...a)=>console.log("[INFO]", ...a);
-    const warn  = (...a)=>console.warn("[WARN]", ...a);
-    const error = (...a)=>console.error("[ERR ]", ...a);
+    let threat = null;                   // {x,y}
+    let exits = [];                      // [{id,x,y}]
+    let shelters = [];                   // [{id,x,y}]
+    let markers = [];                    // drawn capture points
 
-    function setLoading(on){
-      loading.style.display = on ? "grid" : "none";
+    function setLoading(on){ loading.style.display = on ? "flex" : "none"; }
+
+    function buildShowcaseUrl() {
+      return `${BUNDLE_PATH}?m=${encodeURIComponent(MODEL)}&applicationKey=${encodeURIComponent(APPKEY)}&brand=0&qs=1&play=1&q=18`;
     }
 
-    // Compute fitted scale from SITE_BBOX to canvas
+    /** Connect MP SDK once iframe loads */
+    async function connectShowcase(timeoutMs = 15000) {
+      const t0 = performance.now();
+      while (performance.now() - t0 < timeoutMs) {
+        try {
+          const w = mp.contentWindow;
+          if (w?.MP_SDK?.connect) {
+            const sdk = await w.MP_SDK.connect(w, APPKEY);
+            window._mpSdk = _sdk = sdk;
+            info("SDK connected");
+            setLoading(false);
+            return sdk;
+          }
+        } catch(e) { /* retry loop */ }
+        await new Promise(r=>setTimeout(r, 200));
+      }
+      throw new Error("Timed out waiting for MP_SDK.connect");
+    }
+
+    /********* FIT + DRAW *********/
     function fitFromBBox() {
       const W = cvs.width, H = cvs.height;
       if (!SITE_BBOX) { SCALE = {s:1, offx:0, offy:0}; return; }
@@ -160,252 +174,241 @@
     }
     window.addEventListener("resize", resizeCanvas);
 
+    function clearCanvas(){
+      ctx.clearRect(0,0,cvs.width,cvs.height);
+    }
+
     function drawRoute(route){
-      const W = cvs.width, H = cvs.height;
-      ctx.clearRect(0,0,W,H);
-      if(!route || route.length < 2) return;
+      clearCanvas();
+      if (!route || route.length < 2) return;
 
-      ctx.lineWidth = 4;
-      ctx.lineJoin = "round";
-      ctx.lineCap  = "round";
-
-      ctx.beginPath();
-      route.forEach(([x,y], i)=>{
-        const [px,py] = worldToCanvas(x,y);
-        if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
-      });
+      // polyline
+      ctx.lineWidth = 3;
       ctx.strokeStyle = "#00aa66";
-      ctx.shadowColor = "#00aa66";
-      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      route.forEach((p,i)=>{
+        const [px,py] = worldToCanvas(p[0], p[1]);
+        if (i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+      });
       ctx.stroke();
-      ctx.shadowBlur = 0;
 
       // breadcrumbs
       ctx.fillStyle = "#00aa66";
-      const step = 1.0; // meters
-      let acc = 0;
-      for (let i=1; i<route.length; i++){
-        const [ax,ay] = route[i-1], [bx,by] = route[i];
-        const dx = bx-ax, dy=by-ay;
-        const seg = Math.hypot(dx,dy);
-        while (acc <= seg) {
-          const t = acc/seg;
-          const x = ax + dx*t, y = ay + dy*t;
-          const [px,py] = worldToCanvas(x,y);
-          ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill();
-          acc += step;
-        }
-        acc -= seg;
+      for (let i=0;i<route.length;i+=2){
+        const [px,py] = worldToCanvas(route[i][0], route[i][1]);
+        ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill();
       }
+
+      // endpoints
+      const endpoints = [
+        {p:route[0], color:"#3b82f6", label:"Start"},
+        {p:route[route.length-1], color:"#ef4444", label:"Exit/Shelter"}
+      ];
+      ctx.font = "12px system-ui";
+      endpoints.forEach(({p,color,label})=>{
+        const [px,py] = worldToCanvas(p[0], p[1]);
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#e5e7eb";
+        ctx.fillText(label, px+8, py-8);
+      });
     }
 
-    // ---------- Server helpers ----------
+    /********* Backend helpers *********/
     async function fetchSiteMeta(){
-      // Get bbox from server (or compute from nav if needed)
-      try {
-        const r = await fetch('/site/meta.json');
-        if (r.ok) {
-          const m = await r.json();
-          SITE_BBOX = m.bbox;
-          return;
-        }
-      } catch {}
-      // Fallback: ask server for a route (Phase 1.0 saved a sample)
-      // If none, leave default SCALE.
-    }
-
-    async function requestRoute(sx,sy,gx,gy){
-      const r = await fetch(`/route?sx=${sx}&sy=${sy}&gx=${gx}&gy=${gy}`);
-      if(!r.ok) throw new Error(await r.text());
-      return await r.json();
-    }
-
-    // ---------- HUD wiring ----------
-    document.getElementById("btnFullscreen").onclick = ()=> {
-      if (document.fullscreenElement) document.exitFullscreen();
-      else wrap.requestFullscreen();
-    };
-
-    document.getElementById("btnRoute").onclick = async ()=>{
       try{
-        setLoading(true);
+        const r = await fetch(`${BACKEND_URL}/site/meta`);
+        if(!r.ok) return;
+        const meta = await r.json();
+        if (meta && meta.bbox_xy && meta.bbox_xy.min && meta.bbox_xy.max) {
+          SITE_BBOX = { min: meta.bbox_xy.min, max: meta.bbox_xy.max };
+        }
+      }catch(_) { /* optional */ }
+    }
+
+    async function fetchDestinations(){
+      try{
+        const r = await fetch(`${BACKEND_URL}/destinations`);
+        if(!r.ok) return;
+        const d = await r.json();
+        exits = d.exits || [];
+        shelters = d.shelters || [];
+      }catch(_){}
+    }
+
+    async function saveDestinations(){
+      const r = await fetch(`${BACKEND_URL}/destinations`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ exits, shelters })
+      });
+      if (!r.ok) throw new Error(await r.text());
+    }
+
+    function downloadDestinations(){
+      const blob = new Blob([JSON.stringify({exits, shelters}, null, 2)], {type:"application/json"});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = "destinations.json";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    async function routeSafeAuto(){
+      if (!threat) { alert("Place a threat pin by clicking in the viewer."); return; }
+      // Start from camera (x,z -> x,y)
+      let cam = {x:0,y:0};
+      try {
+        const pos = await _sdk.Camera.getPosition();
+        cam = { x: pos.x, y: pos.z };
+      } catch(_) {
+        // fallback to manual fields
         const sx = parseFloat(document.getElementById("sx").value);
         const sy = parseFloat(document.getElementById("sy").value);
-        const gx = parseFloat(document.getElementById("gx").value);
-        const gy = parseFloat(document.getElementById("gy").value);
-        const out = await requestRoute(sx,sy,gx,gy);
+        cam = {x:sx, y:sy};
+      }
 
-        // If server returns bbox the first time, fit canvas to it
-        if (!SITE_BBOX && out?.route?.length >= 2) {
+      setLoading(true);
+      try{
+        const res = await fetch(`${BACKEND_URL}/route_safe`, {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ start:cam, threat })
+        });
+        if(!res.ok){
+          const txt = await res.text();
+          throw new Error(`Route error ${res.status}: ${txt}`);
+        }
+        const out = await res.json();
+
+        if (!SITE_BBOX && out.route?.length >= 2) {
           const xs = out.route.map(p=>p[0]);
           const ys = out.route.map(p=>p[1]);
-          SITE_BBOX = {
-            min: [Math.min(...xs), Math.min(...ys)],
-            max: [Math.max(...xs), Math.max(...ys)]
-          };
+          SITE_BBOX = { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
           fitFromBBox();
         }
 
         window._lastRoute = out.route;
-        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m`;
+        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m · ${out.decision.toUpperCase()} → ${out.target_kind} (${out.target_id})`;
         drawRoute(out.route);
       }catch(e){
         alert(e.message || e);
       }finally{
         setLoading(false);
       }
-    };
+    }
 
-    // ---------- SDK boot ----------
-    (async function boot(){
+    async function routeManualTest(){
+      const sx = parseFloat(document.getElementById("sx").value);
+      const sy = parseFloat(document.getElementById("sy").value);
+      const gx = sx + 10.0, gy = sy + 5.0; // just a smoke test target
       setLoading(true);
-
-      // 1) load Showcase (embed)
-      const modelId = new URLSearchParams(location.search).get("m") || "1ghABoaBFPZ";
-      const isProd = location.hostname.endsWith(".github.io");
-      const origin = isProd ? "https://my.matterport.com" : "https://my.matterport.com";
-      const url = `${origin}/show/?m=${modelId}&applicationKey=${encodeURIComponent('REDACTED_APP_KEY')}&play=1&qs=1&brand=0&dh=0`;
-      mp.src = url;
-
-      // 2) Connect SDK (optional for Phase 1.0 overlay)
-      let _sdk = null;
-      async function connectShowcase(timeoutMs=15000){
-        const t0=performance.now();
-        while (performance.now() - t0 < timeoutMs) {
-          try {
-            const w = mp.contentWindow;
-            if (w?.MP_SDK?.connect) {
-              const sdk = await w.MP_SDK.connect(w, APPKEY);
-              window._mpSdk = _sdk = sdk;
-              info("SDK connected");
-              setLoading(false);
-              return sdk;
-            }
-          } catch(e) { /* retry loop */ }
-          await new Promise(r=>setTimeout(r, 200));
+      try{
+        const res = await fetch(`${BACKEND_URL}/route`, {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ start:{x:sx,y:sy}, goal:{x:gx,y:gy} })
+        });
+        if(!res.ok){
+          const txt = await res.text();
+          throw new Error(`Route error ${res.status}: ${txt}`);
         }
-        throw new Error("Timed out waiting for MP_SDK.connect");
-      }
+        const out = await res.json();
+        if (!SITE_BBOX && out.route?.length >= 2) {
+          const xs = out.route.map(p=>p[0]); const ys = out.route.map(p=>p[1]);
+          SITE_BBOX = { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
+          fitFromBBox();
+        }
+        window._lastRoute = out.route;
+        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m (manual test)`;
+        drawRoute(out.route);
+      }catch(e){ alert(e.message || e); }finally{ setLoading(false); }
+    }
 
-      /********* FIT + DRAW *********/
-      function fitFromBBox() {
-        const W = cvs.width, H = cvs.height;
-        if (!SITE_BBOX) { SCALE = {s:1, offx:0, offy:0}; return; }
-        const [minx, miny] = SITE_BBOX.min;
-        const [maxx, maxy] = SITE_BBOX.max;
-        const pad = 30;
+    /********* Viewer interactions *********/
+    function clearOverlay(){
+      window._lastRoute = null;
+      clearCanvas();
+      markers = [];
+      threat = null;
+      stats.textContent = "Length: —";
+    }
 
-        const rw = Math.max(1e-6, maxx - minx);
-        const rh = Math.max(1e-6, maxy - miny);
+    async function onViewerClick(evt){
+      // Raycast to floor
+      try{
+        const hits = await _sdk.Pointer.raycast(evt.clientX, evt.clientY, { include: ['floor'] });
+        if (!hits.length) return;
+        const hit = hits[0];
+        // MP uses x,z in plan view (y is up) → map to (x,y)
+        const p = { x: hit.position.x, y: hit.position.z };
 
-        const sx = (W - 2*pad) / rw;
-        const sy = (H - 2*pad) / rh;
-        const s  = Math.min(sx, sy);
+        if (captureToggle.checked && evt.shiftKey) {
+          const label = prompt('Label as "exit:<name>" or "shelter:<name>"', 'exit:front');
+          if (!label) return;
+          const [kind, id] = label.split(':');
+          const rec = { id: (id||`pt-${Date.now()}`), x:p.x, y:p.y };
+          if (kind === 'exit') exits.push(rec); else shelters.push(rec);
+          // draw a small capture mark
+          drawCaptureMarker(p, kind === 'exit' ? "#10b981" : "#60a5fa");
+          return;
+        }
 
-        const offx = pad - minx*s + (W - 2*pad - rw*s)/2;
-        const offy = pad - miny*s + (H - 2*pad - rh*s)/2;
+        // Normal click: set threat pin and auto-route
+        threat = p;
+        drawThreatPin(p);
+        await routeSafeAuto();
+      }catch(e){ /* ignore */ }
+    }
 
-        SCALE = {s, offx, offy};
-      }
+    function drawThreatPin(p){
+      // small red marker at threat location
+      const [px,py] = worldToCanvas(p.x, p.y);
+      ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.fill();
+    }
 
-      window.addEventListener("load", async ()=>{
-        resizeCanvas();
+    function drawCaptureMarker(p, color){
+      const [px,py] = worldToCanvas(p.x, p.y);
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fill();
+      markers.push({p,color});
+    }
+
+    /********* UI wiring *********/
+    document.getElementById("btnFullscreen").addEventListener("click", async()=>{
+      try{ await (wrap.requestFullscreen?.() || wrap.webkitRequestFullscreen?.()); }catch(_) {}
+    });
+    btnReset.addEventListener("click", clearOverlay);
+    btnRouteTest.addEventListener("click", routeManualTest);
+    document.getElementById("btnSaveDest").addEventListener("click", async ()=>{
+      try{ await saveDestinations(); alert("Saved exits/shelters to server."); }catch(e){ alert(e.message||e); }
+    });
+    document.getElementById("btnDownloadDest").addEventListener("click", downloadDestinations);
+
+    // Kickoff
+    (async function init(){
+      setLoading(true);
+      resizeCanvas();
+
+      // 1) load Showcase bundle
+      mp.src = buildShowcaseUrl();
+
+      // 2) connect SDK after iframe loads
+      mp.addEventListener("load", async () => {
         try {
-          await connectShowcase(15000);  // sets window._mpSdk on success
+          await connectShowcase(15000);
+          // click anywhere on viewer to place threat or capture points
+          mp.contentWindow.addEventListener("pointerup", onViewerClick);
         } catch (e) {
           error(e);
-          // Keep UI usable even if SDK connect fails; overlay will still work
           setLoading(false);
         }
       }, { once:true });
 
-      // 3) pull site bbox for consistent scaling
+      // 3) pull site bbox for consistent scaling + destinations
       await fetchSiteMeta();
+      await fetchDestinations();
       fitFromBBox();
+      setLoading(false);
     })();
-
-    /* ==================== PHASE 1.1 ADDITIONS ==================== */
-
-    // In-memory capture store
-    const CAPTURE = { exits: [], shelters: [] };
-
-    function canvasToWorld(px, py) {
-      const W = cvs.width, H = cvs.height;
-      const {s, offx, offy} = SCALE || {s:1, offx:0, offy:0};
-      const x = (px - offx) / s;
-      const y = ((H - py) - offy) / s;
-      return [x, y];
-    }
-
-    function drawMarkers() {
-      const W = cvs.width, H = cvs.height;
-      const R = 5;
-      ctx.save();
-      // exits: green
-      ctx.fillStyle = '#2ecc71';
-      for (const p of CAPTURE.exits) {
-        const [px, py] = worldToCanvas(p.x, p.y);
-        ctx.beginPath(); ctx.arc(px, py, R, 0, Math.PI*2); ctx.fill();
-      }
-      // shelters: blue
-      ctx.fillStyle = '#3498db';
-      for (const p of CAPTURE.shelters) {
-        const [px, py] = worldToCanvas(p.x, p.y);
-        ctx.beginPath(); ctx.arc(px, py, R, 0, Math.PI*2); ctx.fill();
-      }
-      ctx.restore();
-    }
-
-    // augment drawRoute to also draw markers
-    const __origDrawRoute = drawRoute;
-    drawRoute = function(route){
-      __origDrawRoute(route);
-      drawMarkers();
-    };
-
-    // also re-draw markers on resize
-    const __origResizeCanvas = resizeCanvas;
-    resizeCanvas = function(){
-      __origResizeCanvas();
-      drawMarkers();
-    };
-
-    // Click capture handler on canvas (Shift+Click)
-    cvs.addEventListener('click', (e) => {
-      const cap = document.getElementById('captureMode');
-      if (!cap || !cap.checked || !e.shiftKey) return;
-      const rect = cvs.getBoundingClientRect();
-      const px = e.clientX - rect.left;
-      const py = e.clientY - rect.top;
-      const [x, y] = canvasToWorld(px, py);
-      const label = prompt('Label this point as exit:<name> or shelter:<name>', 'exit:front');
-      if (!label) return;
-      const parts = String(label).split(':');
-      const kind = (parts[0] || '').trim().toLowerCase();
-      const id = (parts[1] || ('p' + Date.now())).trim();
-      const rec = { id, x: +x, y: +y, z: 0 };
-      if (kind === 'exit') CAPTURE.exits.push(rec);
-      else CAPTURE.shelters.push(rec);
-      drawMarkers();
-    });
-
-    // Download destinations.json
-    document.getElementById('btnDownloadDest').addEventListener('click', () => {
-      const blob = new Blob([JSON.stringify({exits: CAPTURE.exits, shelters: CAPTURE.shelters}, null, 2)], {type:'application/json'});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'destinations.json';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    });
-
-    // Reset overlay (clears route but keeps captured points)
-    document.getElementById('btnReset').addEventListener('click', () => {
-      window._lastRoute = null;
-      ctx.clearRect(0,0,cvs.width,cvs.height);
-      drawMarkers();
-      stats.textContent = 'Length: —';
-    });
   </script>
 </body>
 </html>
