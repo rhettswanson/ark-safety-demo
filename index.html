@@ -2,114 +2,305 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <title>Ark Safety Demo – Matterport + AI</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Ark Safety Demo – Bundle</title>
   <style>
-    html, body { margin:0; height:100%; background:#111; color:#fff; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial; }
-    #wrap { height:100%; position:relative; }
-    #mp   { width:100%; height:100%; border:0; background:#000; }
-    #hud  { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,.55); padding:10px; border-radius:8px; backdrop-filter: blur(4px); }
-    .btn  { margin:2px; padding:6px 10px; cursor:pointer; border-radius:6px; border:1px solid #444; background:#222; color:#fff; }
-    .btn:hover { background:#2c2c2c; }
-    .row { margin-bottom:6px; }
-    label { margin-right:10px; user-select:none; }
+    :root {
+      --ui-bg: rgba(0,0,0,.75);
+      --ui-fg: #fff;
+      --accent: #00ff88;
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #111;
+      color: var(--ui-fg);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    #wrap {
+      position: relative;         /* so overlay can absolutely position inside */
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+    #mp {
+      border: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #hud {
+      position: absolute;
+      left: 8px; top: 8px;
+      background: var(--ui-bg);
+      backdrop-filter: blur(6px);
+      border-radius: 10px;
+      padding: 10px 12px;
+      z-index: 30;
+    }
+    #hud .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .btn {
+      border: 0;
+      background: #2a2a2a;
+      color: #eee;
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .btn:hover { background: #3a3a3a; }
+    .switch { color: #ddd; font-size: 14px; }
+    .switch input { vertical-align: middle; }
+    .pill {
+      background: #1e1e1e;
+      border: 1px solid #333;
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: #ddd;
+      font-size: 13px;
+    }
+    #ai-overlay { pointer-events: none; }
+    #toast {
+      position: absolute; right: 12px; top: 12px; z-index: 40;
+      max-width: 420px; padding: 10px 12px; border-radius: 10px;
+      background: var(--ui-bg); border: 1px solid #444; display: none;
+    }
+    .spinner {
+      display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid #999; border-top-color: var(--accent);
+      animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: -2px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .kbd { font: 12px/18px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 1px 6px; border:1px solid #555; border-bottom-width:2px; border-radius:6px;}
   </style>
 </head>
 <body>
   <div id="wrap">
-    <!-- IMPORTANT: showcase.html lives under bundle/dist/ -->
     <iframe
       id="mp"
       allow="fullscreen; xr-spatial-tracking"
       allowfullscreen
-      src="">
-    </iframe>
+      src=""
+    ></iframe>
 
     <div id="hud">
-      <div class="row">
+      <div class="row" style="margin-bottom:8px;">
         <button class="btn" id="btnDollhouse">Dollhouse start</button>
         <button class="btn" id="btnInside">Inside start</button>
-      </div>
-      <div class="row">
-        <label><input type="checkbox" id="chkBrand" checked /> Hide branding</label>
-        <label><input type="checkbox" id="chkQuickstart" checked /> Quiet UI</label>
-        <label><input type="checkbox" id="chkAutoplay" checked /> Autoplay</label>
-      </div>
-      <div class="row">
-        <button class="btn" id="btnReload">Apply</button>
+        <label class="switch pill"><input type="checkbox" id="chkBrand" checked /> <span>Hide branding</span></label>
+        <label class="switch pill"><input type="checkbox" id="chkQuickstart" checked /> <span>Quiet UI</span></label>
+        <label class="switch pill"><input type="checkbox" id="chkAutoplay" checked /> <span>Autoplay</span></label>
+        <button class="btn" id="btnApply">Apply</button>
         <button class="btn" id="btnFullscreen">Fullscreen</button>
       </div>
+      <div class="row">
+        <button class="btn" id="btnAnalyze"><span id="aiBusy" style="display:none" class="spinner"></span>Analyze (AI)</button>
+        <span class="pill">Hotkey: <span class="kbd">A</span></span>
+      </div>
     </div>
+
+    <div id="toast"></div>
   </div>
 
   <script>
-    // ---- constants / handles ----
-    const MODEL_SID = "1ghABoaBFPZ";
-    const APPKEY    = "akqd0dp3hr9wz4eu70zd1rsab";
+    /* ───────────────────────────
+       CONFIG
+    ─────────────────────────── */
+    const MODEL  = "1ghABoaBFPZ"; // your model sid
+    const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab"; // your Showcase SDK key (domain-restricted)
+    // If you change tunnels/host for your Python AI server, update this:
+    const BACKEND_URL = "https://leads-scanners-copying-said.trycloudflare.com";
 
+    /* ───────────────────────────
+       Basic UI wiring
+    ─────────────────────────── */
     const mp   = document.getElementById("mp");
     const qs   = document.getElementById("chkQuickstart");
     const br   = document.getElementById("chkBrand");
     const ap   = document.getElementById("chkAutoplay");
-    const btnR = document.getElementById("btnReload");
+    const btnD = document.getElementById("btnDollhouse");
+    const btnI = document.getElementById("btnInside");
+    const btnR = document.getElementById("btnApply");
     const btnF = document.getElementById("btnFullscreen");
-    const btnInside = document.getElementById("btnInside");
-    const btnDoll   = document.getElementById("btnDollhouse");
+    const btnA = document.getElementById("btnAnalyze");
+    const toast = document.getElementById('toast');
+    const aiBusy = document.getElementById('aiBusy');
 
-    // Build the showcase URL pointing at your local bundle/dist/showcase.html
-    function buildShowcaseUrl({ mode = "inside" } = {}) {
+    let startMode = "dollhouse";
+    btnD.onclick = () => (startMode = "dollhouse");
+    btnI.onclick = () => (startMode = "inside");
+
+    btnF.onclick = () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen();
+    };
+
+    btnR.onclick = loadShowcase;
+    window.addEventListener('DOMContentLoaded', loadShowcase);
+
+    function loadShowcase() {
       const params = new URLSearchParams({
-        m: MODEL_SID,
+        m: MODEL,
         applicationKey: APPKEY,
-        play: ap.checked ? "1" : "0",
-        qs:   qs.checked ? "1" : "0",
-        brand: br.checked ? "0" : "1",
+        brand: br.checked ? 0 : 1,
+        qs: qs.checked ? 1 : 0,
+        autoplay: ap.checked ? 1 : 0,
+        play: 1
       });
-      if (mode === "dollhouse") params.set("dh", "1");
-      return `bundle/dist/showcase.html?${params.toString()}`;
+
+      // If you deployed the Matterport bundle under /bundle/dist/showcase.html:
+      mp.src = `./bundle/dist/showcase.html?${params.toString()}`;
+
+      info('Loading space…');
     }
 
-    function loadSpace(mode) {
-      const url = buildShowcaseUrl({ mode });
-      console.log("[iframe] loading:", url);
-      mp.src = url;
+    /* ───────────────────────────
+       TOAST + helpers
+    ─────────────────────────── */
+    function info(msg)  { showToast(msg); }
+    function ok(msg)    { showToast('✅ ' + msg); }
+    function warn(msg)  { showToast('⚠️ ' + msg); }
+    function err(msg)   { showToast('❌ ' + msg); }
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.style.display = 'block';
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => toast.style.display = 'none', 3500);
     }
 
-    // Try to connect to the SDK with a short retry loop
-    async function connectSdkWithRetry(maxMs = 8000, stepMs = 250) {
-      const started = Date.now();
-      while (Date.now() - started < maxMs) {
-        try {
-          if (mp.contentWindow && mp.contentWindow.MP_SDK && typeof mp.contentWindow.MP_SDK.connect === "function") {
-            const sdk = await mp.contentWindow.MP_SDK.connect(mp.contentWindow);
-            console.log("✅ SDK connected:", sdk);
-            return sdk;
-          }
-        } catch (e) {
-          console.debug("SDK connect attempt failed, will retry…", e);
-        }
-        await new Promise(r => setTimeout(r, stepMs));
-      }
-      throw new Error("SDK connect timed out — MP_SDK not present on iframe window");
-    }
-
-    // Apply / Fullscreen / Presets
-    btnR.addEventListener("click", () => loadSpace());
-    btnF.addEventListener("click", () => mp.requestFullscreen());
-    btnInside.addEventListener("click", () => loadSpace("inside"));
-    btnDoll  .addEventListener("click", () => loadSpace("dollhouse"));
-
-    // When the iframe finishes navigating, try to connect to the SDK
-    mp.addEventListener("load", async () => {
-      try {
-        await connectSdkWithRetry();
-      } catch (err) {
-        console.error("❌ SDK connect failed:", err);
-      }
+    /* ───────────────────────────
+       AI BUTTON + hotkey
+    ─────────────────────────── */
+    btnA.onclick = analyzeNow;
+    window.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'a') analyzeNow();
     });
 
-    // Initial load (inside view)
-    loadSpace("inside");
+    async function analyzeNow() {
+      aiBusy.style.display = 'inline-block';
+      try {
+        const sdk = await connectSDK();
+        const png = await takeScreenshotRobust(sdk);
+        const result = await fetch(BACKEND_URL + '/predict', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ imageBase64: png })
+        }).then(r => r.json());
+
+        drawDetections(result);
+        ok('AI analysis complete.');
+      } catch (e) {
+        console.error(e);
+        err(typeof e === 'string' ? e : (e?.message || 'AI failed'));
+      } finally {
+        aiBusy.style.display = 'none';
+      }
+    }
+
+    /* ───────────────────────────
+       Connect to SDK
+    ─────────────────────────── */
+    async function connectSDK() {
+      // Wait until iframe is ready
+      const ifr = mp;
+      if (!ifr || !ifr.contentWindow) throw new Error('Viewer not ready');
+
+      // Wait a moment in case it’s still booting
+      await new Promise(r => setTimeout(r, 300));
+
+      if (!ifr.contentWindow.MP_SDK?.connect) {
+        // Give it another brief tick
+        await new Promise(r => setTimeout(r, 400));
+      }
+      if (!ifr.contentWindow.MP_SDK?.connect) {
+        throw new Error('SDK not found on viewer window yet. Try again after it finishes loading the space.');
+      }
+
+      // Connect
+      const sdk = await ifr.contentWindow.MP_SDK.connect(ifr);
+      return sdk;
+    }
+
+    /* ───────────────────────────
+       Robust screenshot (handles API shape differences)
+    ─────────────────────────── */
+    async function takeScreenshotRobust(sdk) {
+      // Preferred: object shape
+      try {
+        const png = await sdk.Renderer.takeScreenShot({ width: 1280, height: 720, includeUI: false });
+        if (typeof png === 'string' && png.startsWith('data:image')) return png;
+      } catch (e) {
+        // fall through
+      }
+      // Legacy positional signature (width, height, includeUI)
+      const png = await sdk.Renderer.takeScreenShot(1280, 720, false);
+      if (typeof png === 'string' && png.startsWith('data:image')) return png;
+
+      throw new Error('Failed to capture screenshot from viewer.');
+    }
+
+    /* ───────────────────────────
+       Draw detection boxes
+    ─────────────────────────── */
+    function drawDetections(out) {
+      // Support a few common shapes:
+      // - { boxes: [{x,y,w,h,label,score}], imageWidth, imageHeight }
+      // - { detections: [{bbox:[x,y,w,h],label,score}], image:{width,height} }
+      const boxes = Array.isArray(out?.boxes)
+        ? out.boxes.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h, label: b.label, score: b.score }))
+        : Array.isArray(out?.detections)
+          ? out.detections.map(d => {
+              const [x,y,w,h] = d.bbox || [0,0,0,0];
+              return { x, y, w, h, label: d.label, score: d.score };
+            })
+          : [];
+
+      const imgW = out?.imageWidth || out?.image?.width  || 1280;
+      const imgH = out?.imageHeight|| out?.image?.height || 720;
+
+      // Make / clear overlay
+      const wrap = document.getElementById('wrap');
+      let overlay = document.getElementById('ai-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'ai-overlay';
+        overlay.style.position = 'absolute';
+        overlay.style.inset = '0';
+        overlay.style.zIndex = '20';
+        wrap.appendChild(overlay);
+      }
+      overlay.innerHTML = '';
+
+      // Scale from AI image space to on-screen iframe size
+      const W = wrap.clientWidth, H = wrap.clientHeight;
+      const sx = W / imgW, sy = H / imgH;
+
+      boxes.forEach(b => {
+        if (!isFinite(b.x) || !isFinite(b.y) || !isFinite(b.w) || !isFinite(b.h)) return;
+        const el = document.createElement('div');
+        el.style.position = 'absolute';
+        el.style.left   = (b.x * sx) + 'px';
+        el.style.top    = (b.y * sy) + 'px';
+        el.style.width  = (b.w * sx) + 'px';
+        el.style.height = (b.h * sy) + 'px';
+        el.style.border = '2px solid var(--accent)';
+        el.style.borderRadius = '4px';
+        el.style.boxShadow = '0 0 6px rgba(0,255,136,.6)';
+        const tag = document.createElement('div');
+        const pct = isFinite(b.score) ? Math.round(b.score * 100) : null;
+        tag.textContent = `${b.label ?? 'object'}${pct!=null ? ' '+pct+'%' : ''}`;
+        tag.style.position = 'absolute';
+        tag.style.left = '0';
+        tag.style.top = '-20px';
+        tag.style.padding = '2px 6px';
+        tag.style.font = '12px/18px system-ui, sans-serif';
+        tag.style.background = 'rgba(0,0,0,.7)';
+        tag.style.color = 'var(--accent)';
+        tag.style.border = '1px solid var(--accent)';
+        tag.style.borderRadius = '4px';
+        el.appendChild(tag);
+        overlay.appendChild(el);
+      });
+    }
   </script>
 </body>
 </html>
