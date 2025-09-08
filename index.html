@@ -124,31 +124,44 @@
       return await new Promise(res => { const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.readAsDataURL(blob); });
     }
 
-    async function getScreenshotDataUrl(sdk){
-      try{
-        // 1) Classic renderer API
-        if (sdk?.Renderer?.takeScreenShot){
-          const out = await sdk.Renderer.takeScreenShot(1280,720);
-          if (out instanceof Blob) return await blobToDataURL(out);
-          if (typeof out === "string" && out.startsWith("data:image")) return out;
-        }
-        // 2) Newer scene API (v5+)
-        if (sdk?.Scene?.captureScreenshot){
-          const blob = await sdk.Scene.captureScreenshot({ width:1280, height:720 });
-          if (blob instanceof Blob) return await blobToDataURL(blob);
-        }
-        // 3) Older camera API (rare)
-        if (sdk?.Camera?.takeScreenShot){
-          const out = await sdk.Camera.takeScreenShot(1280,720);
-          if (out instanceof Blob) return await blobToDataURL(out);
-          if (typeof out === "string" && out.startsWith("data:image")) return out;
-        }
-      }catch(e){
-        warn("Screenshot capture failed:", e?.message || e);
+    async function getScreenshotDataUrl(sdk) {
+  try {
+    if (sdk?.Renderer?.takeScreenShot) {
+      const out = await sdk.Renderer.takeScreenShot(1280, 720);
+
+      // Case 1: Blob
+      if (out instanceof Blob) {
+        return await blobToDataURL(out);
       }
-      warn("Screenshot capture failed (will continue without image): undefined");
-      return null;
+
+      // Case 2: String (already data URL)
+      if (typeof out === "string" && out.startsWith("data:image")) {
+        return out;
+      }
+
+      // Case 3: Raw bytes (Uint8Array / ArrayBuffer)
+      if (out instanceof Uint8Array || out instanceof ArrayBuffer) {
+        const blob = new Blob([out], { type: "image/jpeg" });
+        return await blobToDataURL(blob);
+      }
     }
+
+    if (sdk?.Scene?.captureScreenshot) {
+      const blob = await sdk.Scene.captureScreenshot({ width: 1280, height: 720 });
+      if (blob instanceof Blob) return await blobToDataURL(blob);
+    }
+
+    if (sdk?.Camera?.takeScreenShot) {
+      const out = await sdk.Camera.takeScreenShot(1280, 720);
+      if (out instanceof Blob) return await blobToDataURL(out);
+      if (typeof out === "string" && out.startsWith("data:image")) return out;
+    }
+  } catch (e) {
+    console.warn("Screenshot capture failed:", e?.message || e);
+  }
+  console.warn("Screenshot capture failed (no usable output)");
+  return null;
+}
 
     function clearOverlay(){ overlay.innerHTML=""; }
     function renderBoxes(out){
