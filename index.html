@@ -28,8 +28,15 @@
     .pill { font-size:12px; padding:4px 8px; border-radius:999px; background:#111827; border:1px solid #2a3340; }
 
     #overlay { position:absolute; inset:0; z-index:25; pointer-events:none; }
-    #routeLayer { position:absolute; inset:0; }
+    #routeLayer { position:absolute; inset:0; pointer-events:none; } /* never steal clicks */
     #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
+
+    /* NEW: transparent capture layer that sits above the iframe when Capture Mode is ON */
+    #captureGlass {
+      position:absolute; inset:0; z-index:26;     /* above iframe, below HUD */
+      pointer-events:none;                        /* OFF by default; toggled ON in JS */
+      cursor: default;
+    }
 
     #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:40;
       background: radial-gradient(ellipse at center, rgba(0,0,0,.65) 0%, rgba(0,0,0,.85) 65%); }
@@ -40,6 +47,9 @@
 <body>
   <div id="wrap">
     <iframe id="mp" allow="fullscreen; xr-spatial-tracking" allowfullscreen src=""></iframe>
+
+    <!-- NEW: capture layer -->
+    <div id="captureGlass" aria-hidden="true"></div>
 
     <div id="hud" role="toolbar" aria-label="Controls">
       <div class="group">
@@ -102,6 +112,7 @@
     const btnReset = document.getElementById("btnReset");
     const btnRouteTest = document.getElementById("btnRouteTest");
     const captureToggle = document.getElementById("captureMode");
+    const glass = document.getElementById("captureGlass");
 
     let SITE_BBOX = null;                // {min:[x,y], max:[x,y]}
     let SCALE     = {s:1, offx:0, offy:0}; // meters->pixels
@@ -372,6 +383,43 @@
       markers.push({p,color});
     }
 
+    /* ===== NEW: Capture glass controls ===== */
+    function setCaptureActive(on){
+      glass.style.pointerEvents = on ? "auto" : "none";
+      glass.style.cursor = on ? "crosshair" : "default";
+    }
+    captureToggle.addEventListener("change", (e)=> setCaptureActive(e.target.checked));
+
+    // Intercept Shift+Click above the iframe and raycast inside Showcase
+    glass.addEventListener("pointerdown", async (e) => {
+      if (!captureToggle.checked || !e.shiftKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Convert to iframe-local pixels
+      const rect = mp.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      try {
+        const hits = await _sdk.Pointer.raycast(x, y, { include: ['floor'] });
+        if (!hits.length) return;
+        const hit = hits[0];
+        const p = { x: hit.position.x, y: hit.position.z };
+
+        const label = prompt('Label as "exit:<name>" or "shelter:<name>"', 'exit:front');
+        if (!label) return;
+        const [kind, idRaw] = String(label).split(':');
+        const id = (idRaw || `pt-${Date.now()}`).trim();
+        const rec = { id, x: p.x, y: p.y };
+        if (kind === 'exit') exits.push(rec); else shelters.push(rec);
+
+        drawCaptureMarker(p, kind === 'exit' ? "#10b981" : "#60a5fa");
+      } catch (err) {
+        console.warn("captureGlass raycast failed:", err);
+      }
+    });
+
     /********* UI wiring *********/
     document.getElementById("btnFullscreen").addEventListener("click", async()=>{
       try{ await (wrap.requestFullscreen?.() || wrap.webkitRequestFullscreen?.()); }catch(_) {}
@@ -395,7 +443,7 @@
       mp.addEventListener("load", async () => {
         try {
           await connectShowcase(15000);
-          // click anywhere on viewer to place threat or capture points
+          // click anywhere on viewer to place threat or capture points (normal mode)
           mp.contentWindow.addEventListener("pointerup", onViewerClick);
         } catch (e) {
           error(e);
@@ -407,6 +455,7 @@
       await fetchSiteMeta();
       await fetchDestinations();
       fitFromBBox();
+      setCaptureActive(captureToggle.checked); // initialize glass state
       setLoading(false);
     })();
   </script>
