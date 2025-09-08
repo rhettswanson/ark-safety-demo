@@ -2,70 +2,38 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, maximum-scale=1"
-  />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
   <title>Ark Safety Demo – Matterport</title>
   <style>
     :root { color-scheme: light dark; }
     html, body { height: 100%; margin: 0; }
     body { background:#111; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#e5e7eb; }
     #wrap { position: relative; height: 100%; width: 100%; overflow: hidden; }
-    iframe#mp {
-      position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background:#000;
-    }
+    iframe#mp { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background:#000; }
 
-    /* HUD */
     #hud {
       position: absolute; top: 10px; left: 10px; z-index: 20;
       display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
       background: rgba(0,0,0,.6); padding: 10px; border-radius: 10px; backdrop-filter: blur(4px);
     }
-    .btn {
-      appearance: none; border: 0; padding: 6px 10px; border-radius: 8px; cursor: pointer;
-      background:#222; color:#eee; font-weight: 600;
-    }
+    .btn { appearance: none; border: 0; padding: 6px 10px; border-radius: 8px; cursor: pointer; background:#222; color:#eee; font-weight: 600; }
     .btn:hover { background:#2f2f2f; }
     .switch { display:inline-flex; align-items:center; gap:6px; }
     .switch input { transform: translateY(1px); }
 
-    /* Loading overlay */
-    #loading {
-      position: absolute; inset: 0; z-index: 19; display:flex; align-items:center; justify-content:center;
-      background: radial-gradient(ellipse at center, rgba(0,0,0,.65) 0%, rgba(0,0,0,.85) 60%);
-    }
-    .spinner {
-      width: 86px; height: 86px; border-radius: 50%;
-      border: 8px solid rgba(255,255,255,.2);
-      border-top-color: #fff; animation: spin 1s linear infinite;
-    }
+    #loading { position: absolute; inset: 0; z-index: 19; display:flex; align-items:center; justify-content:center;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,.65) 0%, rgba(0,0,0,.85) 60%); }
+    .spinner { width: 86px; height: 86px; border-radius: 50%; border: 8px solid rgba(255,255,255,.2); border-top-color: #fff; animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* AI overlay */
-    #ai-overlay {
-      position:absolute; inset:0; pointer-events:none; z-index:21;
-      font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-    }
-
-    /* Source badge */
-    #srcBadge {
-      position:absolute; left:12px; bottom:12px; z-index: 22;
-      padding:4px 8px; border-radius:12px; background:#1f2937; color:#fff; opacity:.85;
-      font:12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-    }
+    #ai-overlay { position:absolute; inset:0; pointer-events:none; z-index:21; font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    #srcBadge { position:absolute; left:12px; bottom:12px; z-index: 22; padding:4px 8px; border-radius:12px; background:#1f2937; color:#fff; opacity:.85; font:12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
   </style>
 </head>
 <body>
   <div id="wrap">
-    <iframe
-      id="mp"
-      allow="fullscreen; xr-spatial-tracking"
-      allowfullscreen
-      src=""
-    ></iframe>
+    <iframe id="mp" allow="fullscreen; xr-spatial-tracking" allowfullscreen src=""></iframe>
 
-    <!-- HUD -->
     <div id="hud" role="toolbar" aria-label="Controls">
       <button class="btn" id="btnDollhouse">Dollhouse start</button>
       <button class="btn" id="btnInside">Inside start</button>
@@ -80,28 +48,18 @@
       <button class="btn" id="btnAnalyze" title="Hotkey: A">Analyze (AI)</button>
     </div>
 
-    <!-- Loading overlay -->
     <div id="loading"><div class="spinner" aria-label="Loading"></div></div>
-
-    <!-- AI overlay goes on top of the iframe -->
     <div id="ai-overlay" aria-hidden="true"></div>
-
-    <!-- Optional badge that shows which source loaded -->
     <div id="srcBadge">Source: Local</div>
   </div>
 
   <script>
-    /*********************
-     *  CONFIG
-     *********************/
-    const MODEL  = "1ghABoaBFPZ";                      // your model SID
-    const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";        // your SDK key
-    const BACKEND_URL = "https://compute-freeware-planet-curious.trycloudflare.com";  // Cloudflare tunnel
-
-    // Local bundle path on GitHub Pages (relative)
+    /********* CONFIG *********/
+    const MODEL  = "1ghABoaBFPZ";
+    const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
+    const BACKEND_URL = "https://compute-freeware-planet-curious.trycloudflare.com"; // ← your live tunnel
     const BUNDLE_PATH = "bundle/dist/showcase.html";
 
-    // Elements
     const mp  = document.getElementById("mp");
     const hud = document.getElementById("hud");
     const wrap = document.getElementById("wrap");
@@ -121,209 +79,125 @@
     const info= console.info.bind(console, "[app]");
     const warn= console.warn.bind(console, "[app]");
 
-    /*********************
-     *  Loading overlay helpers
-     *********************/
     const $loading = document.getElementById("loading");
-    function setLoading(on) {
-      if (!$loading) return;
-      $loading.style.display = on ? "flex" : "none";
-    }
+    function setLoading(on){ if($loading) $loading.style.display = on ? "flex" : "none"; }
+    function setSourceBadge(text){ const b=document.getElementById("srcBadge"); if(b) b.textContent=`Source: ${text}`; }
 
-    /*********************
-     *  Source badge
-     *********************/
-    function setSourceBadge(text) {
-      const b = document.getElementById("srcBadge");
-      if (b) b.textContent = `Source: ${text}`;
-    }
-
-    /*********************
-     *  Build iframe URL from toggles
-     *********************/
-    function buildShowcaseUrl(start = "") {
+    function buildShowcaseUrl(start="") {
       const brand = chkBrand.checked ? 0 : 1;
       const quiet = chkQuiet.checked ? 1 : 0;
       const play  = chkAuto.checked  ? 1 : 0;
-
-      // q=18 gives a nice default quality balance; add any other query opts you like
       const base = `${BUNDLE_PATH}?m=${encodeURIComponent(MODEL)}&applicationKey=${encodeURIComponent(APPKEY)}&brand=${brand}&qs=${quiet}&play=${play}&q=18`;
-      if (!start) return base;
-      // Use the start param as a “stage hint”; Showcase ignores unknown params
-      return `${base}&start=${encodeURIComponent(start)}`;
+      return start ? `${base}&start=${encodeURIComponent(start)}` : base;
     }
 
-    /*********************
-     *  Robust connect to MP_SDK from bundle
-     *********************/
-    async function connectShowcase(timeoutMs = 15000) {
-      const start = performance.now();
-      while (performance.now() - start < timeoutMs) {
-        try {
-          const w = mp.contentWindow;
-          if (w?.MP_SDK?.connect) {
-            const sdk = await w.MP_SDK.connect(w, APPKEY);
-            window._mpSdk = sdk; // helpful in dev console
+    async function connectShowcase(timeoutMs=15000){
+      const t0=performance.now();
+      while(performance.now()-t0<timeoutMs){
+        try{
+          const w=mp.contentWindow;
+          if(w?.MP_SDK?.connect){
+            const sdk=await w.MP_SDK.connect(w, APPKEY);
+            window._mpSdk=sdk;
             info("SDK connected");
             setLoading(false);
             return sdk;
           }
-        } catch (e) {
-          // keep polling
-        }
-        await new Promise(r => setTimeout(r, 200));
+        }catch(e){}
+        await new Promise(r=>setTimeout(r,200));
       }
       throw new Error("Timed out waiting for MP_SDK.connect");
     }
 
-    /*********************
-     *  Initial load
-     *********************/
-    function initialLoad() {
-      setLoading(true);
-      setSourceBadge("Local");
-      mp.src = buildShowcaseUrl("");        // default load
-      afterIframeSrcSet();
+    function initialLoad(){ setLoading(true); setSourceBadge("Local"); mp.src=buildShowcaseUrl(""); afterIframeSrcSet(); }
+    async function afterIframeSrcSet(){ try{ await connectShowcase(15000); }catch(e){ warn("MP_SDK connect failed:", e.message); } }
+
+    btnD.addEventListener("click",()=>{ mp.src=buildShowcaseUrl("dollhouse"); afterIframeSrcSet(); });
+    btnI.addEventListener("click",()=>{ mp.src=buildShowcaseUrl("inside");    afterIframeSrcSet(); });
+    btnApply.addEventListener("click",()=>{ mp.src=buildShowcaseUrl("");      afterIframeSrcSet(); });
+    btnFS.addEventListener("click",async()=>{ try{ await (wrap.requestFullscreen?.()||wrap.webkitRequestFullscreen?.()); }catch(_){} });
+
+    window.addEventListener("keydown",(ev)=>{ if(ev.key.toLowerCase()==="a"){ ev.preventDefault(); btnAnalyze.click(); } });
+
+    /* ===== Screenshot capture with robust fallbacks ===== */
+    async function blobToDataURL(blob){
+      return await new Promise(res => { const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.readAsDataURL(blob); });
     }
 
-    async function afterIframeSrcSet() {
-      try {
-        await connectShowcase(15000);
-      } catch (e) {
-        warn("MP_SDK connect failed:", e.message);
-        // If you wanted, you could fall back to CDN here by setting mp.src again.
-      }
-    }
-
-    /*********************
-     *  Buttons
-     *********************/
-    btnD.addEventListener("click", () => { mp.src = buildShowcaseUrl("dollhouse"); afterIframeSrcSet(); });
-    btnI.addEventListener("click", () => { mp.src = buildShowcaseUrl("inside");    afterIframeSrcSet(); });
-    btnApply.addEventListener("click", () => { mp.src = buildShowcaseUrl("");      afterIframeSrcSet(); });
-
-    btnFS.addEventListener("click", async () => {
-      try { await (wrap.requestFullscreen?.() || wrap.webkitRequestFullscreen?.()); } catch(_){}
-    });
-
-    // Hotkey: A to analyze
-    window.addEventListener("keydown", (ev) => {
-      if (ev.key.toLowerCase() === "a") {
-        ev.preventDefault();
-        btnAnalyze.click();
-      }
-    });
-
-    /*********************
-     *  AI: take screenshot (best-effort) and call backend
-     *********************/
-    async function getScreenshotDataUrl(sdk) {
-      // Best effort – different SDK versions expose different helpers.
-      try {
-        if (sdk?.Renderer?.takeScreenShot) {
-          const blob = await sdk.Renderer.takeScreenShot(1280, 720);
-          if (blob instanceof Blob) {
-            return await new Promise(res => {
-              const fr = new FileReader();
-              fr.onload = () => res(fr.result);
-              fr.readAsDataURL(blob);
-            });
-          }
-          // Some versions return a data URL string directly
-          if (typeof blob === "string" && blob.startsWith("data:image")) return blob;
+    async function getScreenshotDataUrl(sdk){
+      try{
+        // 1) Classic renderer API
+        if (sdk?.Renderer?.takeScreenShot){
+          const out = await sdk.Renderer.takeScreenShot(1280,720);
+          if (out instanceof Blob) return await blobToDataURL(out);
+          if (typeof out === "string" && out.startsWith("data:image")) return out;
         }
-      } catch(e) {
-        warn("Screenshot capture failed (will continue without image):", e.message);
+        // 2) Newer scene API (v5+)
+        if (sdk?.Scene?.captureScreenshot){
+          const blob = await sdk.Scene.captureScreenshot({ width:1280, height:720 });
+          if (blob instanceof Blob) return await blobToDataURL(blob);
+        }
+        // 3) Older camera API (rare)
+        if (sdk?.Camera?.takeScreenShot){
+          const out = await sdk.Camera.takeScreenShot(1280,720);
+          if (out instanceof Blob) return await blobToDataURL(out);
+          if (typeof out === "string" && out.startsWith("data:image")) return out;
+        }
+      }catch(e){
+        warn("Screenshot capture failed:", e?.message || e);
       }
+      warn("Screenshot capture failed (will continue without image): undefined");
       return null;
     }
 
-    function clearOverlay() { overlay.innerHTML = ""; }
-
-    function renderBoxes(out) {
+    function clearOverlay(){ overlay.innerHTML=""; }
+    function renderBoxes(out){
       clearOverlay();
-      const W = wrap.clientWidth, H = wrap.clientHeight;
-      const imgW = out.imageWidth || 1280;
-      const imgH = out.imageHeight || 720;
-
-      const sx = W / imgW;
-      const sy = H / imgH;
-
-      (out.boxes || []).forEach(b => {
-        const el = document.createElement("div");
-        el.style.position = "absolute";
-        el.style.left   = (b.x * sx) + "px";
-        el.style.top    = (b.y * sy) + "px";
-        el.style.width  = (b.w * sx) + "px";
-        el.style.height = (b.h * sy) + "px";
-        el.style.border = "2px solid #00ff88";
-        el.style.borderRadius = "4px";
-        el.style.boxShadow = "0 0 6px rgba(0,255,136,.6)";
+      const W=wrap.clientWidth, H=wrap.clientHeight;
+      const imgW=out.imageWidth||1280, imgH=out.imageHeight||720;
+      const sx=W/imgW, sy=H/imgH;
+      (out.boxes||[]).forEach(b=>{
+        const el=document.createElement("div");
+        el.style.position="absolute";
+        el.style.left=(b.x*sx)+"px"; el.style.top=(b.y*sy)+"px";
+        el.style.width=(b.w*sx)+"px"; el.style.height=(b.h*sy)+"px";
+        el.style.border="2px solid #00ff88"; el.style.borderRadius="4px"; el.style.boxShadow="0 0 6px rgba(0,255,136,.6)";
         overlay.appendChild(el);
-
-        const tag = document.createElement("div");
-        tag.textContent = `${b.label ?? "obj"} ${Math.round((b.score ?? 0)*100)}%`;
-        tag.style.position = "absolute";
-        tag.style.left = (b.x * sx) + "px";
-        tag.style.top  = (b.y * sy - 20) + "px";
-        tag.style.padding = "2px 6px";
-        tag.style.font = "12px/18px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
-        tag.style.background = "rgba(0,0,0,.7)";
-        tag.style.color = "#00ff88";
-        tag.style.border = "1px solid #00ff88";
-        tag.style.borderRadius = "4px";
+        const tag=document.createElement("div");
+        tag.textContent=`${b.label ?? "obj"} ${Math.round((b.score ?? 0)*100)}%`;
+        tag.style.position="absolute";
+        tag.style.left=(b.x*sx)+"px"; tag.style.top=(b.y*sy-20)+"px";
+        tag.style.padding="2px 6px"; tag.style.font="12px/18px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif";
+        tag.style.background="rgba(0,0,0,.7)"; tag.style.color="#00ff88"; tag.style.border="1px solid #00ff88"; tag.style.borderRadius="4px";
         overlay.appendChild(tag);
       });
     }
 
-    async function analyze() {
-      btnAnalyze.disabled = true;
-      btnAnalyze.textContent = "Analyzing…";
-      setLoading(true);
-
-      try {
+    async function analyze(){
+      btnAnalyze.disabled=true; btnAnalyze.textContent="Analyzing…"; setLoading(true);
+      try{
         const sdk = window._mpSdk || await connectShowcase(12000);
+        const dataUrl = await getScreenshotDataUrl(sdk); // may be null
+        let pose=null; try{ pose = await sdk.Camera?.getPose?.(); }catch(_){}
+        const payload={ spaceId: MODEL, image: dataUrl, pose };
 
-        // Snapshot (best-effort)
-        const dataUrl = await getScreenshotDataUrl(sdk);
-
-        // Optional pose (if available)
-        let pose = null;
-        try { pose = await sdk.Camera?.getPose?.(); } catch(_) {}
-
-        const payload = {
-          spaceId: MODEL,
-          image: dataUrl,          // may be null; your backend can ignore if not needed
-          pose
-        };
-
+        // Post to your backend /infer (same as before):contentReference[oaicite:1]{index=1}
         const res = await fetch(`${BACKEND_URL}/infer`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
           body: JSON.stringify(payload),
         });
-
-        if (!res.ok) {
-          throw new Error(`Backend ${res.status}`);
-        }
-
+        if(!res.ok) throw new Error(`Backend ${res.status}`);
         const out = await res.json();
-        // Expected: { boxes: [{x,y,w,h,label,score}], imageWidth, imageHeight }
         renderBoxes(out || {});
-      } catch (e) {
-        clearOverlay();
-        warn("Analyze failed:", e.message);
-        alert("Analyze failed: " + e.message);
-      } finally {
-        setLoading(false);
-        btnAnalyze.disabled = false;
-        btnAnalyze.textContent = "Analyze (AI)";
+      }catch(e){
+        clearOverlay(); warn("Analyze failed:", e.message); alert("Analyze failed: "+e.message);
+      }finally{
+        setLoading(false); btnAnalyze.disabled=false; btnAnalyze.textContent="Analyze (AI)";
       }
     }
 
     btnAnalyze.addEventListener("click", analyze);
-
-    // Kick things off
     initialLoad();
   </script>
 </body>
