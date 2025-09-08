@@ -2,75 +2,58 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Ark Safety Demo – Matterport + AI</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1"
+  />
+  <title>Ark Safety Demo – Matterport</title>
   <style>
-    :root {
-      --ui-bg: rgba(0,0,0,.75);
-      --ui-fg: #fff;
-      --accent: #00ff88;
+    :root { color-scheme: light dark; }
+    html, body { height: 100%; margin: 0; }
+    body { background:#111; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#e5e7eb; }
+    #wrap { position: relative; height: 100%; width: 100%; overflow: hidden; }
+    iframe#mp {
+      position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background:#000;
     }
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #111;
-      color: var(--ui-fg);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-    }
-    #wrap {
-      position: relative;         /* so overlay can absolutely position inside */
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-    }
-    #mp {
-      border: 0;
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
+
+    /* HUD */
     #hud {
-      position: absolute;
-      left: 8px; top: 8px;
-      background: var(--ui-bg);
-      backdrop-filter: blur(6px);
-      border-radius: 10px;
-      padding: 10px 12px;
-      z-index: 30;
+      position: absolute; top: 10px; left: 10px; z-index: 20;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      background: rgba(0,0,0,.6); padding: 10px; border-radius: 10px; backdrop-filter: blur(4px);
     }
-    #hud .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .btn {
-      border: 0;
-      background: #2a2a2a;
-      color: #eee;
-      padding: 6px 10px;
-      border-radius: 8px;
-      cursor: pointer;
+      appearance: none; border: 0; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+      background:#222; color:#eee; font-weight: 600;
     }
-    .btn:hover { background: #3a3a3a; }
-    .switch { color: #ddd; font-size: 14px; }
-    .switch input { vertical-align: middle; }
-    .pill {
-      background: #1e1e1e;
-      border: 1px solid #333;
-      padding: 2px 8px;
-      border-radius: 999px;
-      color: #ddd;
-      font-size: 13px;
-    }
-    #ai-overlay { pointer-events: none; }
-    #toast {
-      position: absolute; right: 12px; top: 12px; z-index: 40;
-      max-width: 420px; padding: 10px 12px; border-radius: 10px;
-      background: var(--ui-bg); border: 1px solid #444; display: none;
+    .btn:hover { background:#2f2f2f; }
+    .switch { display:inline-flex; align-items:center; gap:6px; }
+    .switch input { transform: translateY(1px); }
+
+    /* Loading overlay */
+    #loading {
+      position: absolute; inset: 0; z-index: 19; display:flex; align-items:center; justify-content:center;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,.65) 0%, rgba(0,0,0,.85) 60%);
     }
     .spinner {
-      display: inline-block; width: 14px; height: 14px; border-radius: 50%;
-      border: 2px solid #999; border-top-color: var(--accent);
-      animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: -2px;
+      width: 86px; height: 86px; border-radius: 50%;
+      border: 8px solid rgba(255,255,255,.2);
+      border-top-color: #fff; animation: spin 1s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .kbd { font: 12px/18px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 1px 6px; border:1px solid #555; border-bottom-width:2px; border-radius:6px;}
+
+    /* AI overlay */
+    #ai-overlay {
+      position:absolute; inset:0; pointer-events:none; z-index:21;
+      font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    /* Source badge */
+    #srcBadge {
+      position:absolute; left:12px; bottom:12px; z-index: 22;
+      padding:4px 8px; border-radius:12px; background:#1f2937; color:#fff; opacity:.85;
+      font:12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
   </style>
 </head>
 <body>
@@ -82,225 +65,266 @@
       src=""
     ></iframe>
 
-    <div id="hud">
-      <div class="row" style="margin-bottom:8px;">
-        <button class="btn" id="btnDollhouse">Dollhouse start</button>
-        <button class="btn" id="btnInside">Inside start</button>
-        <label class="switch pill"><input type="checkbox" id="chkBrand" checked /> <span>Hide branding</span></label>
-        <label class="switch pill"><input type="checkbox" id="chkQuickstart" checked /> <span>Quiet UI</span></label>
-        <label class="switch pill"><input type="checkbox" id="chkAutoplay" checked /> <span>Autoplay</span></label>
-        <button class="btn" id="btnApply">Apply</button>
-        <button class="btn" id="btnFullscreen">Fullscreen</button>
-      </div>
-      <div class="row">
-        <button class="btn" id="btnAnalyze"><span id="aiBusy" style="display:none" class="spinner"></span>Analyze (AI)</button>
-        <span class="pill">Hotkey: <span class="kbd">A</span></span>
-      </div>
+    <!-- HUD -->
+    <div id="hud" role="toolbar" aria-label="Controls">
+      <button class="btn" id="btnDollhouse">Dollhouse start</button>
+      <button class="btn" id="btnInside">Inside start</button>
+
+      <label class="switch"><input type="checkbox" id="chkBrand" checked /><span>Hide branding</span></label>
+      <label class="switch"><input type="checkbox" id="chkQuiet"  checked /><span>Quiet UI</span></label>
+      <label class="switch"><input type="checkbox" id="chkAutoplay" checked /><span>Autoplay</span></label>
+
+      <button class="btn" id="btnApply">Apply</button>
+      <button class="btn" id="btnFullscreen">Fullscreen</button>
+
+      <button class="btn" id="btnAnalyze" title="Hotkey: A">Analyze (AI)</button>
     </div>
 
-    <div id="toast"></div>
+    <!-- Loading overlay -->
+    <div id="loading"><div class="spinner" aria-label="Loading"></div></div>
+
+    <!-- AI overlay goes on top of the iframe -->
+    <div id="ai-overlay" aria-hidden="true"></div>
+
+    <!-- Optional badge that shows which source loaded -->
+    <div id="srcBadge">Source: Local</div>
   </div>
 
   <script>
-    /* ───────────────────────────
-       CONFIG
-    ─────────────────────────── */
-    const MODEL  = "1ghABoaBFPZ"; // your model sid
-    const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab"; // your Showcase SDK key (domain-restricted)
-    // If you change tunnels/host for your Python AI server, update this:
-    const BACKEND_URL = "https://leads-scanners-copying-said.trycloudflare.com";
+    /*********************
+     *  CONFIG
+     *********************/
+    const MODEL  = "1ghABoaBFPZ";                      // your model SID
+    const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";        // your SDK key
+    const BACKEND_URL = "https://leads-scanners-copying-said.trycloudflare.com";  // Cloudflare tunnel
 
-    /* ───────────────────────────
-       Basic UI wiring
-    ─────────────────────────── */
-    const mp   = document.getElementById("mp");
-    const qs   = document.getElementById("chkQuickstart");
-    const br   = document.getElementById("chkBrand");
-    const ap   = document.getElementById("chkAutoplay");
+    // Local bundle path on GitHub Pages (relative)
+    const BUNDLE_PATH = "bundle/dist/showcase.html";
+
+    // Elements
+    const mp  = document.getElementById("mp");
+    const hud = document.getElementById("hud");
+    const wrap = document.getElementById("wrap");
+    const overlay = document.getElementById("ai-overlay");
+
     const btnD = document.getElementById("btnDollhouse");
     const btnI = document.getElementById("btnInside");
-    const btnR = document.getElementById("btnApply");
-    const btnF = document.getElementById("btnFullscreen");
-    const btnA = document.getElementById("btnAnalyze");
-    const toast = document.getElementById('toast');
-    const aiBusy = document.getElementById('aiBusy');
+    const btnApply = document.getElementById("btnApply");
+    const btnFS = document.getElementById("btnFullscreen");
+    const btnAnalyze = document.getElementById("btnAnalyze");
 
-    let startMode = "dollhouse";
-    btnD.onclick = () => (startMode = "dollhouse");
-    btnI.onclick = () => (startMode = "inside");
+    const chkBrand = document.getElementById("chkBrand");
+    const chkQuiet = document.getElementById("chkQuiet");
+    const chkAuto  = document.getElementById("chkAutoplay");
 
-    btnF.onclick = () => {
-      if (document.fullscreenElement) document.exitFullscreen();
-      else document.documentElement.requestFullscreen();
-    };
+    const log = console.log.bind(console, "[app]");
+    const info= console.info.bind(console, "[app]");
+    const warn= console.warn.bind(console, "[app]");
 
-    btnR.onclick = loadShowcase;
-    window.addEventListener('DOMContentLoaded', loadShowcase);
-
-    function loadShowcase() {
-      const params = new URLSearchParams({
-        m: MODEL,
-        applicationKey: APPKEY,
-        brand: br.checked ? 0 : 1,
-        qs: qs.checked ? 1 : 0,
-        autoplay: ap.checked ? 1 : 0,
-        play: 1
-      });
-
-      // If you deployed the Matterport bundle under /bundle/dist/showcase.html:
-      mp.src = `./bundle/dist/showcase.html?${params.toString()}`;
-
-      info('Loading space…');
+    /*********************
+     *  Loading overlay helpers
+     *********************/
+    const $loading = document.getElementById("loading");
+    function setLoading(on) {
+      if (!$loading) return;
+      $loading.style.display = on ? "flex" : "none";
     }
 
-    /* ───────────────────────────
-       TOAST + helpers
-    ─────────────────────────── */
-    function info(msg)  { showToast(msg); }
-    function ok(msg)    { showToast('✅ ' + msg); }
-    function warn(msg)  { showToast('⚠️ ' + msg); }
-    function err(msg)   { showToast('❌ ' + msg); }
-    function showToast(msg) {
-      toast.textContent = msg;
-      toast.style.display = 'block';
-      clearTimeout(showToast._t);
-      showToast._t = setTimeout(() => toast.style.display = 'none', 3500);
+    /*********************
+     *  Source badge
+     *********************/
+    function setSourceBadge(text) {
+      const b = document.getElementById("srcBadge");
+      if (b) b.textContent = `Source: ${text}`;
     }
 
-    /* ───────────────────────────
-       AI BUTTON + hotkey
-    ─────────────────────────── */
-    btnA.onclick = analyzeNow;
-    window.addEventListener('keydown', (e) => {
-      if (e.key.toLowerCase() === 'a') analyzeNow();
+    /*********************
+     *  Build iframe URL from toggles
+     *********************/
+    function buildShowcaseUrl(start = "") {
+      const brand = chkBrand.checked ? 0 : 1;
+      const quiet = chkQuiet.checked ? 1 : 0;
+      const play  = chkAuto.checked  ? 1 : 0;
+
+      // q=18 gives a nice default quality balance; add any other query opts you like
+      const base = `${BUNDLE_PATH}?m=${encodeURIComponent(MODEL)}&applicationKey=${encodeURIComponent(APPKEY)}&brand=${brand}&qs=${quiet}&play=${play}&q=18`;
+      if (!start) return base;
+      // Use the start param as a “stage hint”; Showcase ignores unknown params
+      return `${base}&start=${encodeURIComponent(start)}`;
+    }
+
+    /*********************
+     *  Robust connect to MP_SDK from bundle
+     *********************/
+    async function connectShowcase(timeoutMs = 15000) {
+      const start = performance.now();
+      while (performance.now() - start < timeoutMs) {
+        try {
+          const w = mp.contentWindow;
+          if (w?.MP_SDK?.connect) {
+            const sdk = await w.MP_SDK.connect(w, APPKEY);
+            window._mpSdk = sdk; // helpful in dev console
+            info("SDK connected");
+            setLoading(false);
+            return sdk;
+          }
+        } catch (e) {
+          // keep polling
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+      throw new Error("Timed out waiting for MP_SDK.connect");
+    }
+
+    /*********************
+     *  Initial load
+     *********************/
+    function initialLoad() {
+      setLoading(true);
+      setSourceBadge("Local");
+      mp.src = buildShowcaseUrl("");        // default load
+      afterIframeSrcSet();
+    }
+
+    async function afterIframeSrcSet() {
+      try {
+        await connectShowcase(15000);
+      } catch (e) {
+        warn("MP_SDK connect failed:", e.message);
+        // If you wanted, you could fall back to CDN here by setting mp.src again.
+      }
+    }
+
+    /*********************
+     *  Buttons
+     *********************/
+    btnD.addEventListener("click", () => { mp.src = buildShowcaseUrl("dollhouse"); afterIframeSrcSet(); });
+    btnI.addEventListener("click", () => { mp.src = buildShowcaseUrl("inside");    afterIframeSrcSet(); });
+    btnApply.addEventListener("click", () => { mp.src = buildShowcaseUrl("");      afterIframeSrcSet(); });
+
+    btnFS.addEventListener("click", async () => {
+      try { await (wrap.requestFullscreen?.() || wrap.webkitRequestFullscreen?.()); } catch(_){}
     });
 
-    async function analyzeNow() {
-      aiBusy.style.display = 'inline-block';
+    // Hotkey: A to analyze
+    window.addEventListener("keydown", (ev) => {
+      if (ev.key.toLowerCase() === "a") {
+        ev.preventDefault();
+        btnAnalyze.click();
+      }
+    });
+
+    /*********************
+     *  AI: take screenshot (best-effort) and call backend
+     *********************/
+    async function getScreenshotDataUrl(sdk) {
+      // Best effort – different SDK versions expose different helpers.
       try {
-        const sdk = await connectSDK();
-        const png = await takeScreenshotRobust(sdk);
-        const result = await fetch(BACKEND_URL + '/predict', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ imageBase64: png })
-        }).then(r => r.json());
-
-        drawDetections(result);
-        ok('AI analysis complete.');
-      } catch (e) {
-        console.error(e);
-        err(typeof e === 'string' ? e : (e?.message || 'AI failed'));
-      } finally {
-        aiBusy.style.display = 'none';
+        if (sdk?.Renderer?.takeScreenShot) {
+          const blob = await sdk.Renderer.takeScreenShot(1280, 720);
+          if (blob instanceof Blob) {
+            return await new Promise(res => {
+              const fr = new FileReader();
+              fr.onload = () => res(fr.result);
+              fr.readAsDataURL(blob);
+            });
+          }
+          // Some versions return a data URL string directly
+          if (typeof blob === "string" && blob.startsWith("data:image")) return blob;
+        }
+      } catch(e) {
+        warn("Screenshot capture failed (will continue without image):", e.message);
       }
+      return null;
     }
 
-    /* ───────────────────────────
-       Connect to SDK
-    ─────────────────────────── */
-    async function connectSDK() {
-      // Wait until iframe is ready
-      const ifr = mp;
-      if (!ifr || !ifr.contentWindow) throw new Error('Viewer not ready');
+    function clearOverlay() { overlay.innerHTML = ""; }
 
-      // Wait a moment in case it’s still booting
-      await new Promise(r => setTimeout(r, 300));
-
-      if (!ifr.contentWindow.MP_SDK?.connect) {
-        // Give it another brief tick
-        await new Promise(r => setTimeout(r, 400));
-      }
-      if (!ifr.contentWindow.MP_SDK?.connect) {
-        throw new Error('SDK not found on viewer window yet. Try again after it finishes loading the space.');
-      }
-
-      // Connect
-      const sdk = await ifr.contentWindow.MP_SDK.connect(ifr);
-      return sdk;
-    }
-
-    /* ───────────────────────────
-       Robust screenshot (handles API shape differences)
-    ─────────────────────────── */
-    async function takeScreenshotRobust(sdk) {
-      // Preferred: object shape
-      try {
-        const png = await sdk.Renderer.takeScreenShot({ width: 1280, height: 720, includeUI: false });
-        if (typeof png === 'string' && png.startsWith('data:image')) return png;
-      } catch (e) {
-        // fall through
-      }
-      // Legacy positional signature (width, height, includeUI)
-      const png = await sdk.Renderer.takeScreenShot(1280, 720, false);
-      if (typeof png === 'string' && png.startsWith('data:image')) return png;
-
-      throw new Error('Failed to capture screenshot from viewer.');
-    }
-
-    /* ───────────────────────────
-       Draw detection boxes
-    ─────────────────────────── */
-    function drawDetections(out) {
-      // Support a few common shapes:
-      // - { boxes: [{x,y,w,h,label,score}], imageWidth, imageHeight }
-      // - { detections: [{bbox:[x,y,w,h],label,score}], image:{width,height} }
-      const boxes = Array.isArray(out?.boxes)
-        ? out.boxes.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h, label: b.label, score: b.score }))
-        : Array.isArray(out?.detections)
-          ? out.detections.map(d => {
-              const [x,y,w,h] = d.bbox || [0,0,0,0];
-              return { x, y, w, h, label: d.label, score: d.score };
-            })
-          : [];
-
-      const imgW = out?.imageWidth || out?.image?.width  || 1280;
-      const imgH = out?.imageHeight|| out?.image?.height || 720;
-
-      // Make / clear overlay
-      const wrap = document.getElementById('wrap');
-      let overlay = document.getElementById('ai-overlay');
-      if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'ai-overlay';
-        overlay.style.position = 'absolute';
-        overlay.style.inset = '0';
-        overlay.style.zIndex = '20';
-        wrap.appendChild(overlay);
-      }
-      overlay.innerHTML = '';
-
-      // Scale from AI image space to on-screen iframe size
+    function renderBoxes(out) {
+      clearOverlay();
       const W = wrap.clientWidth, H = wrap.clientHeight;
-      const sx = W / imgW, sy = H / imgH;
+      const imgW = out.imageWidth || 1280;
+      const imgH = out.imageHeight || 720;
 
-      boxes.forEach(b => {
-        if (!isFinite(b.x) || !isFinite(b.y) || !isFinite(b.w) || !isFinite(b.h)) return;
-        const el = document.createElement('div');
-        el.style.position = 'absolute';
-        el.style.left   = (b.x * sx) + 'px';
-        el.style.top    = (b.y * sy) + 'px';
-        el.style.width  = (b.w * sx) + 'px';
-        el.style.height = (b.h * sy) + 'px';
-        el.style.border = '2px solid var(--accent)';
-        el.style.borderRadius = '4px';
-        el.style.boxShadow = '0 0 6px rgba(0,255,136,.6)';
-        const tag = document.createElement('div');
-        const pct = isFinite(b.score) ? Math.round(b.score * 100) : null;
-        tag.textContent = `${b.label ?? 'object'}${pct!=null ? ' '+pct+'%' : ''}`;
-        tag.style.position = 'absolute';
-        tag.style.left = '0';
-        tag.style.top = '-20px';
-        tag.style.padding = '2px 6px';
-        tag.style.font = '12px/18px system-ui, sans-serif';
-        tag.style.background = 'rgba(0,0,0,.7)';
-        tag.style.color = 'var(--accent)';
-        tag.style.border = '1px solid var(--accent)';
-        tag.style.borderRadius = '4px';
-        el.appendChild(tag);
+      const sx = W / imgW;
+      const sy = H / imgH;
+
+      (out.boxes || []).forEach(b => {
+        const el = document.createElement("div");
+        el.style.position = "absolute";
+        el.style.left   = (b.x * sx) + "px";
+        el.style.top    = (b.y * sy) + "px";
+        el.style.width  = (b.w * sx) + "px";
+        el.style.height = (b.h * sy) + "px";
+        el.style.border = "2px solid #00ff88";
+        el.style.borderRadius = "4px";
+        el.style.boxShadow = "0 0 6px rgba(0,255,136,.6)";
         overlay.appendChild(el);
+
+        const tag = document.createElement("div");
+        tag.textContent = `${b.label ?? "obj"} ${Math.round((b.score ?? 0)*100)}%`;
+        tag.style.position = "absolute";
+        tag.style.left = (b.x * sx) + "px";
+        tag.style.top  = (b.y * sy - 20) + "px";
+        tag.style.padding = "2px 6px";
+        tag.style.font = "12px/18px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+        tag.style.background = "rgba(0,0,0,.7)";
+        tag.style.color = "#00ff88";
+        tag.style.border = "1px solid #00ff88";
+        tag.style.borderRadius = "4px";
+        overlay.appendChild(tag);
       });
     }
+
+    async function analyze() {
+      btnAnalyze.disabled = true;
+      btnAnalyze.textContent = "Analyzing…";
+      setLoading(true);
+
+      try {
+        const sdk = window._mpSdk || await connectShowcase(12000);
+
+        // Snapshot (best-effort)
+        const dataUrl = await getScreenshotDataUrl(sdk);
+
+        // Optional pose (if available)
+        let pose = null;
+        try { pose = await sdk.Camera?.getPose?.(); } catch(_) {}
+
+        const payload = {
+          spaceId: MODEL,
+          image: dataUrl,          // may be null; your backend can ignore if not needed
+          pose
+        };
+
+        const res = await fetch(`${BACKEND_URL}/infer`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          throw new Error(`Backend ${res.status}`);
+        }
+
+        const out = await res.json();
+        // Expected: { boxes: [{x,y,w,h,label,score}], imageWidth, imageHeight }
+        renderBoxes(out || {});
+      } catch (e) {
+        clearOverlay();
+        warn("Analyze failed:", e.message);
+        alert("Analyze failed: " + e.message);
+      } finally {
+        setLoading(false);
+        btnAnalyze.disabled = false;
+        btnAnalyze.textContent = "Analyze (AI)";
+      }
+    }
+
+    btnAnalyze.addEventListener("click", analyze);
+
+    // Kick things off
+    initialLoad();
   </script>
 </body>
 </html>
