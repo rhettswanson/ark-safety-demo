@@ -142,49 +142,18 @@
     // renderer readiness
     let _rendererReady = false;
 
-    /* ===== Local persistence ===== */
-    const LS_KEY = "ark_destinations_v1";
-    let saveTimer = null;
+    // fallback transform
+    let SCALE = { s:1, offx:0, offy:0 };
 
-    function persistLocal() {
-      try { localStorage.setItem(LS_KEY, JSON.stringify({ exits, shelters })); } catch {}
-    }
-    function restoreLocal() {
+    /* ===== Helpers ===== */
+    function toast(msg){
       try {
-        const raw = localStorage.getItem(LS_KEY);
-        if (!raw) return false;
-        const data = JSON.parse(raw);
-        if (Array.isArray(data?.exits)) exits = data.exits;
-        if (Array.isArray(data?.shelters)) shelters = data.shelters;
-        return true;
-      } catch { return false; }
+        const prev = stats.textContent;
+        stats.textContent = msg;
+        setTimeout(()=>{ if (stats.textContent === msg) stats.textContent = prev || "Length: —"; }, 1800);
+      } catch {}
     }
-    async function saveDestinationsServerDebounced() {
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(async () => {
-        try {
-          const r = await fetch(`${BACKEND_URL}/destinations`, {
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ exits, shelters })
-          });
-          if (!r.ok) throw new Error(await r.text());
-        } catch(e) {
-          console.warn("Server save failed (kept local backup):", e?.message || e);
-        }
-      }, 800);
-    }
-    function downloadDestinations(){
-      const blob = new Blob([JSON.stringify({exits, shelters}, null, 2)], {type:"application/json"});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = "destinations.json";
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }
-
     function setLoading(on){ loading.style.display = on ? "flex" : "none"; }
-
     function buildShowcaseUrl() {
       return `${BUNDLE_PATH}?m=${encodeURIComponent(MODEL)}&applicationKey=${encodeURIComponent(APPKEY)}&brand=0&qs=1&play=1&q=18`;
     }
@@ -224,15 +193,57 @@
           if (probe?.position) { _rendererReady = true; return true; }
         } catch (e) {
           const msg = String(e?.message || e);
-          if (msg.includes("not ready")) {
-            await new Promise(r => setTimeout(r, 120));
-            continue;
-          }
+          if (msg.includes("not ready")) { await new Promise(r => setTimeout(r, 120)); continue; }
           throw e;
         }
       }
       throw new Error("Renderer did not become ready in time");
     }
+
+    /********* Fallback transform *********/
+    function worldToCanvasFallback(x, y) {
+      const W = cvs.width, Hh = cvs.height;
+      const {s, offx, offy} = SCALE;
+      const px =  x*s + offx;
+      const py =  Hh - (y*s + offy);
+      return [px, py];
+    }
+    function updateScaleFromBBox() {
+      if (!SITE_BBOX) return;
+      const W = cvs.width, Hh = cvs.height;
+      const [minx, miny] = SITE_BBOX.min;
+      const [maxx, maxy] = SITE_BBOX.max;
+      const pad = 30;
+      const rw = Math.max(1e-6, maxx - minx);
+      const rh = Math.max(1e-6, maxy - miny);
+      const sx = (W - 2*pad) / rw;
+      const sy = (Hh - 2*pad) / rh;
+      const s  = Math.min(sx, sy);
+      const offx = pad - minx*s + (W - 2*pad - rw*s)/2;
+      const offy = pad - miny*s + (Hh - 2*pad - rh*s)/2;
+      SCALE = { s, offx, offy };
+    }
+    function autoScaleIfPossible(){
+      if (!SITE_BBOX) {
+        const xs=[], ys=[];
+        exits.forEach(p=>{xs.push(p.x); ys.push(p.y);});
+        shelters.forEach(p=>{xs.push(p.x); ys.push(p.y);});
+        if (threat){ xs.push(threat.x); ys.push(threat.y); }
+        if (xs.length>0){
+          SITE_BBOX = { min:[Math.min(...xs), Math.min(...ys)],
+                        max:[Math.max(...xs), Math.max(...ys)] };
+        }
+      }
+      updateScaleFromBBox();
+    }
+
+    function resizeCanvas(){
+      const W = wrap.clientWidth, Hh = wrap.clientHeight;
+      if (cvs.width !== W) cvs.width = W;
+      if (cvs.height !== Hh) cvs.height = Hh;
+      updateScaleFromBBox();
+    }
+    window.addEventListener("resize", resizeCanvas);
 
     /********* Homography utils *********/
     function solve8x8(A,b){
@@ -264,8 +275,8 @@
       const [h11,h12,h13,h21,h22,h23,h31,h32]=h;
       return [h11,h12,h13,h21,h22,h23,h31,h32,1];
     }
-    function proj(H, x, y){
-      const [h11,h12,h13,h21,h22,h23,h31,h32,h33]=H;
+    function proj(Hm, x, y){
+      const [h11,h12,h13,h21,h22,h23,h31,h32,h33]=Hm;
       const z = h31*x + h32*y + h33;
       const u = (h11*x + h12*y + h13) / z;
       const v = (h21*x + h22*y + h23) / z;
@@ -281,11 +292,13 @@
       const Hh= Math.max(2, Math.floor(rect.height));
       const dpr = mp.contentWindow?.devicePixelRatio || 1;
 
+      // 10% in from the edges to avoid void/sky/background
+      const m = 0.10;
       const scr = [
-        {u:0, v:0},
-        {u:W, v:0},
-        {u:W, v:Hh},
-        {u:0, v:Hh},
+        {u: W*m,     v: Hh*m},
+        {u: W*(1-m), v: Hh*m},
+        {u: W*(1-m), v: Hh*(1-m)},
+        {u: W*m,     v: Hh*(1-m)},
       ];
       const wrld = [];
       for(const s of scr){
@@ -299,53 +312,67 @@
       return { m: Hm, rect };
     }
 
-    function drawProjectedPoints(points, color, radius=3){
+    /********* Drawing *********/
+    function drawPointsFallback(points, color, r=3){
       ctx.fillStyle=color;
-      if(!H){
-        // Fallback: skip (or you could draw nothing)
-        return;
-      }
-      const {m,rect}=H;
       points.forEach(p=>{
-        const [u,v]=proj(m, p.x, p.y);
-        const px = rect.left + u;
-        const py = rect.top  + v;
-        ctx.beginPath(); ctx.arc(px,py,radius,0,Math.PI*2); ctx.fill();
+        const [px,py]=worldToCanvasFallback(p.x,p.y);
+        ctx.beginPath(); ctx.arc(px,py,r,0,Math.PI*2); ctx.fill();
       });
+    }
+    function drawRouteFallback(route){
+      if(!route || route.length<2) return;
+      ctx.lineWidth=3; ctx.strokeStyle="#00aa66"; ctx.beginPath();
+      route.forEach((p,i)=>{
+        const [x,y]=worldToCanvasFallback(p[0],p[1]);
+        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+      ctx.fillStyle="#00aa66";
+      for(let i=0;i<route.length;i+=2){
+        const [x,y]=worldToCanvasFallback(route[i][0],route[i][1]);
+        ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill();
+      }
     }
 
     function drawProjectedRoute(route){
       ctx.clearRect(0,0,cvs.width,cvs.height);
-      if(!H){ return; }
 
-      if(route && route.length>=2){
+      if (H) {
         const {m,rect}=H;
-        ctx.lineWidth=3; ctx.strokeStyle="#00aa66"; ctx.beginPath();
-        route.forEach((p,i)=>{
-          const [u,v]=proj(m,p[0],p[1]);
-          const x=rect.left+u, y=rect.top+v;
-          if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-        });
-        ctx.stroke();
-
-        ctx.fillStyle="#00aa66";
-        for(let i=0;i<route.length;i+=2){
-          const [u,v]=proj(m,route[i][0],route[i][1]);
-          ctx.beginPath(); ctx.arc(rect.left+u, rect.top+v, 3,0,Math.PI*2); ctx.fill();
+        if(route && route.length>=2){
+          ctx.lineWidth=3; ctx.strokeStyle="#00aa66"; ctx.beginPath();
+          route.forEach((p,i)=>{
+            const [u,v]=proj(m,p[0],p[1]);
+            const x=rect.left+u, y=rect.top+v;
+            if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+          });
+          ctx.stroke();
+          ctx.fillStyle="#00aa66";
+          for(let i=0;i<route.length;i+=2){
+            const [u,v]=proj(m,route[i][0],route[i][1]);
+            ctx.beginPath(); ctx.arc(rect.left+u, rect.top+v, 3,0,Math.PI*2); ctx.fill();
+          }
         }
-
-        // endpoints
-        const endpoints=[ {p:route[0], color:"#3b82f6"}, {p:route[route.length-1], color:"#ef4444"} ];
-        endpoints.forEach(({p,color})=>{
-          const [u,v]=proj(H.m,p[0],p[1]);
-          ctx.fillStyle=color; ctx.beginPath(); ctx.arc(H.rect.left+u,H.rect.top+v,6,0,Math.PI*2); ctx.fill();
-        });
+        // markers (projected)
+        const drawProjPts=(arr,color,r)=>{
+          ctx.fillStyle=color;
+          arr.forEach(p=>{
+            const [u,v]=proj(m,p.x,p.y);
+            ctx.beginPath(); ctx.arc(rect.left+u, rect.top+v, r,0,Math.PI*2); ctx.fill();
+          });
+        };
+        drawProjPts(exits,   "#10b981",5);
+        drawProjPts(shelters,"#60a5fa",5);
+        if(threat) drawProjPts([threat], "#ef4444",6);
+      } else {
+        // Fallback draw (works even before homography is ready)
+        autoScaleIfPossible();
+        drawRouteFallback(route||[]);
+        drawPointsFallback(exits,   "#10b981",5);
+        drawPointsFallback(shelters,"#60a5fa",5);
+        if(threat) drawPointsFallback([threat], "#ef4444",6);
       }
-
-      // markers last
-      drawProjectedPoints(exits, "#10b981", 5);
-      drawProjectedPoints(shelters, "#60a5fa", 5);
-      if(threat) drawProjectedPoints([threat], "#ef4444", 6);
     }
 
     /********* Backend helpers *********/
@@ -356,6 +383,7 @@
         const meta = await r.json();
         if (meta?.bbox_xy?.min && meta?.bbox_xy?.max) {
           SITE_BBOX = { min: meta.bbox_xy.min, max: meta.bbox_xy.max };
+          updateScaleFromBBox();
         }
       }catch(_) {}
     }
@@ -367,6 +395,7 @@
         const d = await r.json();
         exits = d.exits || [];
         shelters = d.shelters || [];
+        autoScaleIfPossible();
       }catch(_){}
     }
 
@@ -385,7 +414,7 @@
     }
 
     async function routeSafeAuto(){
-      if (!threat) { alert("Place a threat pin first."); return; }
+      if (!threat) { toast("Place a threat pin first."); return; }
       let cam = {x:0,y:0};
       try {
         const pos = await _sdk.Camera.getPosition();
@@ -408,7 +437,6 @@
           throw new Error(`Route error ${res.status}: ${txt}`);
         }
         const out = await res.json();
-
         window._lastRoute = out.route;
         stats.textContent = `Length: ${out.length_m?.toFixed(1)} m · ${out.decision?.toUpperCase?.()||"—"} → ${out.target_kind||"—"} (${out.target_id||"—"})`;
       }catch(e){
@@ -418,12 +446,10 @@
       }
     }
 
-    /********* Glass-only input *********/
+    /********* Hit testing + input *********/
     async function screenToWorldXY(x, y) {
       await ensureRendererReady();
-
       const dpr = mp.contentWindow?.devicePixelRatio || 1;
-
       for (let i = 0; i < 5; i++) {
         try {
           const data = await _sdk.Renderer.getWorldPositionData(
@@ -446,7 +472,8 @@
 
     async function placeThreatAtClientXY(x, y){
       const p = await screenToWorldXY(x, y);
-      if (!p || !pointInsideBBox(p)) return false;
+      if (!p) { toast("No ground hit — try another spot"); return false; }
+      if (!pointInsideBBox(p)) { toast("Outside site bounds"); return false; }
       threat = p;
       pendingRoute = true;
       return true;
@@ -465,9 +492,13 @@
         [...capType.querySelectorAll("button")].forEach(b=>b.classList.toggle("active", b.dataset.kind===captureKind));
       }
     });
+
     btnPlaceThreat.addEventListener("click", ()=>{
+      // ensure capture mode is off so click goes to threat placement
+      captureToggle.checked = false;
       threatArmed = true;
       updateGlassState();
+      toast("Click on the model to place the threat");
     });
 
     glass.addEventListener("pointerup", async (e) => {
@@ -484,15 +515,19 @@
 
       if (wantsCapture) {
         const p = await screenToWorldXY(x, y);
-        if (!p || !pointInsideBBox(p)) return;
+        if (!p) { toast("No ground hit — try another spot"); return; }
+        if (!pointInsideBBox(p)) { toast("Outside site bounds"); return; }
 
         if (captureKind === "exit") {
           const id = `exit-${exitAutoId++}`;
           exits.push({ id, x: p.x, y: p.y });
+          toast(`Exit added (${id})`);
         } else {
           const id = `shelter-${shelterAutoId++}`;
           shelters.push({ id, x: p.x, y: p.y });
+          toast(`Shelter added (${id})`);
         }
+        autoScaleIfPossible();
         persistLocal();
         saveDestinationsServerDebounced();
         return;
@@ -500,9 +535,9 @@
 
       if (wantsThreat) {
         const ok = await placeThreatAtClientXY(x, y);
-        threatArmed = false;
+        threatArmed = false;   // single-shot
         updateGlassState();
-        if (!ok) console.warn("No valid hit for threat placement.");
+        if (ok) toast("Threat placed");
       }
     });
 
@@ -519,15 +554,8 @@
       try { H = await calibrateHomography(); } catch {}
       const route = window._lastRoute || null;
 
-      if (cvs.width !== wrap.clientWidth || cvs.height !== wrap.clientHeight) {
-        cvs.width = wrap.clientWidth; cvs.height = wrap.clientHeight;
-      }
-
-      if (route || exits.length || shelters.length || threat) {
-        drawProjectedRoute(route);
-      } else {
-        ctx.clearRect(0,0,cvs.width,cvs.height);
-      }
+      resizeCanvas(); // keeps canvas size in sync
+      drawProjectedRoute(route);
 
       setTimeout(tick, 70);
     }
@@ -541,7 +569,14 @@
     document.getElementById("btnSaveDest").addEventListener("click", async ()=>{
       try{ await saveDestinations(); alert("Saved exits/shelters to server."); }catch(e){ alert(e.message||e); }
     });
-    document.getElementById("btnDownloadDest").addEventListener("click", downloadDestinations);
+    document.getElementById("btnDownloadDest").addEventListener("click", ()=>{
+      const blob = new Blob([JSON.stringify({exits, shelters}, null, 2)], {type:"application/json"});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = "destinations.json";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
 
     // Kickoff
     (async function init(){
@@ -552,9 +587,9 @@
       mp.addEventListener("load", async () => {
         try {
           await connectShowcase(15000);
-          await ensureRendererReady();            // <<< NEW: wait for renderer
+          await ensureRendererReady();
 
-          // After placing threat in plan view, dblclick enter -> route
+          // compute route on entering a sweep after placing the threat
           mp.contentWindow.addEventListener("dblclick", async () => {
             try {
               if (threat && pendingRoute) {
@@ -566,8 +601,7 @@
             }
           });
 
-          // start draw loop
-          tick();
+          tick(); // start draw loop
         } catch (e) {
           error(e);
           setLoading(false);
