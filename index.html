@@ -417,7 +417,7 @@
     // Main click handler inside iframe
     async function onViewerClick(evt){
       try{
-        const hits = await _sdk.Scene.raycast(evt.clientX, evt.clientY, { include: ['floor', 'mesh'] });
+        const hits = await _sdk.raycast(evt.clientX, evt.clientY, { include: ['floor', 'mesh'] });
         if (!hits.length) return;
         const hit = hits[0];
         const p = { x: hit.position.x, y: hit.position.z };
@@ -460,7 +460,7 @@
     /* Direct placement helper from the glass */
     async function placeThreatAtClientXY(x, y){
       try{
-        const hits = await _sdk.Scene.raycast(x, y, { include: ['floor','mesh'] });
+        const hits = await _sdk.raycast(x, y, { include: ['floor','mesh'] });
         if (!hits.length) {
           console.warn("[placeThreat] no hit at", x, y);
           return false;
@@ -505,7 +505,7 @@
 
       if (wantsCapture) {
         try{
-          const hits = await _sdk.Scene.raycast(x, y, { include: ['floor','mesh'] });
+          const hits = await _sdk.raycast(x, y, { include: ['floor','mesh'] });
           if (!hits.length) return;
           const p = { x: hits[0].position.x, y: hits[0].position.z };
 
