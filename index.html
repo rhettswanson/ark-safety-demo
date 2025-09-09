@@ -312,7 +312,7 @@
     function enableThreatPlacement(){
       toast("Click on the scene to place threat");
       // Here we assume clicks feed us screen coords → world hit
-      window.addEventListener('click', async onClickOnce, { once:true });
+      window.addEventListener('click', onClickOnce, { once:true });
       async function onClickOnce(ev){
         try{
           const x = ev.clientX, y = ev.clientY;
