@@ -40,8 +40,8 @@
 
     /* Transparent capture layer (enabled when Capture Mode OR Threat Place is armed) */
     #captureGlass {
-      position:absolute; inset:0; z-index:26;     /* above iframe, below HUD */
-      pointer-events:none;                        /* OFF by default; toggled ON in JS */
+      position:absolute; inset:0; z-index:26;
+      pointer-events:none;  /* toggled ON in JS */
       cursor: default;
     }
 
@@ -131,18 +131,18 @@
     const capType = document.getElementById("capType");
     const btnPlaceThreat = document.getElementById("btnPlaceThreat");
 
-    let SITE_BBOX = null;
-    let SCALE     = {s:1, offx:0, offy:0};
+    let SITE_BBOX = null;                // {min:[x,y], max:[x,y]}
+    let SCALE     = {s:1, offx:0, offy:0}; // meters->pixels (plan view drawing)
     let _sdk      = null;
 
     let threat = null;                   // {x,y}
     let exits = [];                      // [{id,x,y}]
     let shelters = [];                   // [{id,x,y}]
     let markers = [];                    // drawn capture points
-    let captureKind = "exit";
+    let captureKind = "exit";            // "exit" | "shelter"
     let exitAutoId = 1, shelterAutoId = 1;
 
-    let threatArmed = false;
+    let threatArmed = false;             // only place threat when armed
     let pendingRoute = false;            // defer routing until dblclick
 
     /* ===== Local persistence ===== */
@@ -175,7 +175,7 @@
         } catch(e) {
           console.warn("Server save failed (kept local backup):", e?.message || e);
         }
-      }, 1000);
+      }, 800);
     }
     function downloadDestinations(){
       const blob = new Blob([JSON.stringify({exits, shelters}, null, 2)], {type:"application/json"});
@@ -211,7 +211,7 @@
       throw new Error("Timed out waiting for MP_SDK.connect");
     }
 
-    /********* FIT + DRAW *********/
+    /********* FIT + DRAW (2D plan overlay) *********/
     function fitFromBBox() {
       const W = cvs.width, H = cvs.height;
       if (!SITE_BBOX) { SCALE = {s:1, offx:0, offy:0}; return; }
@@ -309,10 +309,10 @@
         const r = await fetch(`${BACKEND_URL}/site/meta`);
         if(!r.ok) return;
         const meta = await r.json();
-        if (meta && meta.bbox_xy && meta.bbox_xy.min && meta.bbox_xy.max) {
+        if (meta?.bbox_xy?.min && meta?.bbox_xy?.max) {
           SITE_BBOX = { min: meta.bbox_xy.min, max: meta.bbox_xy.max };
         }
-      }catch(_) { }
+      }catch(_) {}
     }
 
     async function fetchDestinations(){
@@ -331,6 +331,12 @@
         body: JSON.stringify({ exits, shelters })
       });
       if (!r.ok) throw new Error(await r.text());
+    }
+
+    function pointInsideBBox(p){
+      if (!SITE_BBOX) return true;
+      const {min, max} = SITE_BBOX;
+      return p.x >= min[0] && p.x <= max[0] && p.y >= min[1] && p.y <= max[1];
     }
 
     async function routeSafeAuto(){
@@ -375,109 +381,27 @@
       }
     }
 
-    async function routeManualTest(){
-      const sx = parseFloat(document.getElementById("sx").value);
-      const sy = parseFloat(document.getElementById("sy").value);
-      const gx = sx + 10.0, gy = sy + 5.0;
-      setLoading(true);
-      try{
-        const res = await fetch(`${BACKEND_URL}/route`, {
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ start:{x:sx,y:sy}, goal:{x:gx,y:gy} })
-        });
-        if(!res.ok){
-          const txt = await res.text();
-          throw new Error(`Route error ${res.status}: ${txt}`);
-        }
-        const out = await res.json();
-        if (!SITE_BBOX && out.route?.length >= 2) {
-          const xs = out.route.map(p=>p[0]); const ys = out.route.map(p=>p[1]);
-          SITE_BBOX = { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
-          fitFromBBox();
-        }
-        window._lastRoute = out.route;
-        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m (manual test)`;
-        drawRoute(out.route);
-      }catch(e){ alert(e.message || e); }finally{ setLoading(false); }
-    }
+    /********* Viewer interaction (glass-only input) *********/
 
-    /********* Viewer interactions *********/
-    function clearOverlay(){
-      window._lastRoute = null;
-      clearCanvas();
-      markers = [];
-      threat = null;
-      stats.textContent = "Length: —";
-      drawMarkers();
-      persistLocal();
-      saveDestinationsServerDebounced();
-    }
-
-    // Convert a client X/Y (relative to Showcase window) to world XY using Renderer.getWorldPositionData
+    // 1) Convert screen to world using Renderer API (works across modes)
     async function screenToWorldXY(x, y) {
+      // x,y must be relative to the Showcase viewport (we pass glass-local coords)
       const data = await _sdk.Renderer.getWorldPositionData({ x, y }, undefined, true);
       const pos = data?.position;
-      return pos ? { x: pos.x, y: pos.z } : null; // (x,z)->(x,y)
+      return pos ? { x: pos.x, y: pos.z } : null;
     }
 
-    // Main click handler inside iframe (viewer window)
-    async function onViewerClick(evt){
-      try{
-        const p = await screenToWorldXY(evt.clientX, evt.clientY);
-        if (!p) return;
-
-        if (captureToggle.checked) {
-          if (captureKind === "exit") {
-            const id = `exit-${exitAutoId++}`;
-            exits.push({ id, x: p.x, y: p.y });
-            drawCaptureMarker(p, "#10b981");
-          } else {
-            const id = `shelter-${shelterAutoId++}`;
-            shelters.push({ id, x: p.x, y: p.y });
-            drawCaptureMarker(p, "#60a5fa");
-          }
-          drawMarkers();
-          persistLocal();
-          saveDestinationsServerDebounced();
-          return;
-        }
-
-        // Threat placement flow from inside
-        threat = p;
-        drawMarkers();
-
-        if (threatArmed) {
-          threatArmed = false;
-          updateGlassState();
-        }
-
-        if (!pendingRoute) await routeSafeAuto();
-      }catch(e){ /* ignore */ }
-    }
-
-    function drawCaptureMarker(p, color){
-      const [px,py] = worldToCanvas(p.x, p.y);
-      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fill();
-      markers.push({p,color});
-    }
-
-    /* Direct placement helper from the glass */
+    // 2) Threat placement helper
     async function placeThreatAtClientXY(x, y){
-      try{
-        const p = await screenToWorldXY(x, y);
-        if (!p) { console.warn("[placeThreat] no hit at", x, y); return false; }
-        threat = p;
-        drawMarkers();
-        pendingRoute = true;  // defer until dblclick enter
-        return true;
-      }catch(e){
-        console.warn("[placeThreat] failed:", e);
-        return false;
-      }
+      const p = await screenToWorldXY(x, y);
+      if (!p || !pointInsideBBox(p)) return false;
+      threat = p;
+      drawMarkers();
+      pendingRoute = true;   // will route on dblclick enter
+      return true;
     }
 
-    /* ===== Capture / Place Threat UI ===== */
+    // 3) Glass state + handlers
     function updateGlassState(){
       const on = captureToggle.checked || threatArmed;
       glass.style.pointerEvents = on ? "auto" : "none";
@@ -486,20 +410,21 @@
 
     captureToggle.addEventListener("change", ()=> updateGlassState());
 
-    // toggle between exit/shelter buttons
     capType.addEventListener("click", (e)=>{
       if (e.target?.dataset?.kind) {
         captureKind = e.target.dataset.kind;
-        [...capType.querySelectorAll("button")].forEach(b=>b.classList.toggle("active", b.dataset.kind===captureKind));
+        [...capType.querySelectorAll("button")]
+          .forEach(b=>b.classList.toggle("active", b.dataset.kind===captureKind));
       }
     });
 
     btnPlaceThreat.addEventListener("click", ()=>{
-      threatArmed = true;
+      threatArmed = true;           // arm a single placement click
       updateGlassState();
     });
 
-    // Intercept clicks on the glass (raycast via Renderer)
+    // IMPORTANT: We no longer listen for clicks inside the iframe.
+    // All placement/capture flows go through this glass so coords are consistent.
     glass.addEventListener("pointerup", async (e) => {
       const wantsCapture = captureToggle.checked;
       const wantsThreat  = threatArmed;
@@ -513,44 +438,61 @@
       const y = e.clientY - rect.top;
 
       if (wantsCapture) {
-        try{
-          const p = await screenToWorldXY(x, y);
-          if (!p) return;
+        const p = await screenToWorldXY(x, y);
+        if (!p || !pointInsideBBox(p)) return;
 
-          if (captureKind === "exit") {
-            window.exitAutoId = (window.exitAutoId || 1);
-            const id = `exit-${window.exitAutoId++}`;
-            exits.push({ id, x: p.x, y: p.y });
-            drawCaptureMarker(p, "#10b981");
-          } else {
-            window.shelterAutoId = (window.shelterAutoId || 1);
-            const id = `shelter-${window.shelterAutoId++}`;
-            shelters.push({ id, x: p.x, y: p.y });
-            drawCaptureMarker(p, "#60a5fa");
-          }
+        if (captureKind === "exit") {
+          window.exitAutoId = (window.exitAutoId || 1);
+          const id = `exit-${window.exitAutoId++}`;
+          exits.push({ id, x: p.x, y: p.y });
           drawMarkers();
-          persistLocal();
-          saveDestinationsServerDebounced();
-        }catch(err){
-          console.warn("capture getWorldPosition failed:", err);
+        } else {
+          window.shelterAutoId = (window.shelterAutoId || 1);
+          const id = `shelter-${window.shelterAutoId++}`;
+          shelters.push({ id, x: p.x, y: p.y });
+          drawMarkers();
         }
+        persistLocal();
+        saveDestinationsServerDebounced();
         return;
       }
 
       if (wantsThreat) {
         const ok = await placeThreatAtClientXY(x, y);
-        threatArmed = false;     // always disarm
+        threatArmed = false;     // disarm even if miss
         updateGlassState();
         if (!ok) console.warn("No valid hit for threat placement.");
       }
     });
+
+    function clearOverlay(){
+      window._lastRoute = null;
+      clearCanvas();
+      markers = [];
+      threat = null;
+      stats.textContent = "Length: —";
+      drawMarkers();
+      persistLocal();
+      saveDestinationsServerDebounced();
+    }
+
+    // Hide overlay when in Inside mode (2D overlay can drift there)
+    async function refreshOverlayVisibility(){
+      try{
+        const mode = await _sdk.Mode.get(); // returns 'mode.inside' | 'mode.dollhouse' | 'mode.floorplan' (naming varies slightly by SDK)
+        const show = /dollhouse|floor/i.test(String(mode)) || /floor/i.test(String(mode));
+        document.getElementById("overlay").style.display = show ? "block" : "none";
+      }catch{ /* best effort */ }
+    }
 
     /********* UI wiring *********/
     document.getElementById("btnFullscreen").addEventListener("click", async()=>{
       try{ await (wrap.requestFullscreen?.() || wrap.webkitRequestFullscreen?.()); }catch(_) {}
     });
     btnReset.addEventListener("click", clearOverlay);
-    btnRouteTest.addEventListener("click", routeManualTest);
+    btnRouteTest.addEventListener("click", async ()=>{
+      await routeSafeAuto();
+    });
     document.getElementById("btnSaveDest").addEventListener("click", async ()=>{
       try{ await saveDestinations(); alert("Saved exits/shelters to server."); }catch(e){ alert(e.message||e); }
     });
@@ -566,9 +508,8 @@
       mp.addEventListener("load", async () => {
         try {
           await connectShowcase(15000);
-          mp.contentWindow.addEventListener("pointerup", onViewerClick);
 
-          // draw route when you double-click to enter a sweep after placing in dollhouse/floor plan
+          // Route when you double-click to enter a sweep after placing in dollhouse/floor plan
           mp.contentWindow.addEventListener("dblclick", async () => {
             try {
               if (threat && pendingRoute) {
@@ -579,6 +520,9 @@
               console.warn("dblclick route failed", e);
             }
           });
+
+          // keep overlay visibility roughly in sync with mode
+          setInterval(refreshOverlayVisibility, 700);
         } catch (e) {
           error(e);
           setLoading(false);
