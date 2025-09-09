@@ -1,215 +1,119 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>Ark Active Threat – Phase 1.2 (SDK)</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Ark SafeRoute — Phase 1.2</title>
   <style>
-    :root { color-scheme: light dark; }
-    html, body { height: 100%; margin: 0; }
-    body { background:#0b0b0b; color:#e5e7eb; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
-    #wrap { position: relative; height: 100%; width: 100%; overflow: hidden; }
-    iframe#mp { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background:#000; }
-
-    #hud {
-      position: absolute; top: 10px; left: 10px; z-index: 30;
-      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-      background: rgba(0,0,0,.55); padding: 12px; border-radius: 12px; backdrop-filter: blur(6px);
-      box-shadow: 0 6px 20px rgba(0,0,0,.35);
-    }
-    .group { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .field { display:flex; flex-direction:column; gap:4px; }
-    .field label { font-size:12px; opacity:.85; }
-    .field input {
-      width: 88px; padding:6px 8px; border-radius:8px; border:1px solid #2b2b2b; background:#101010; color:#f0f0f0;
-    }
-    .btn { appearance:none; border:0; padding:8px 12px; border-radius:10px; cursor:pointer; font-weight:700; background:#1f2937; color:#fff; }
-    .btn:hover { background:#243244; }
-    .pill { font-size:12px; padding:4px 8px; border-radius:999px; background:#111827; border:1px solid #2a3340; }
-
-    #overlay { position:absolute; inset:0; z-index:25; pointer-events:none; }
-    #routeLayer { position:absolute; inset:0; pointer-events:none; }
-    #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
-
-    /* capture layer over iframe, only active when needed */
-    #captureGlass {
-      position:absolute; inset:0; z-index:26;
-      pointer-events:none; cursor: default;
-    }
-
-    #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:40;
-      background: radial-gradient(ellipse at center, rgba(0,0,0,.65) 0%, rgba(0,0,0,.85) 65%); }
-    .spinner { width: 80px; height:80px; border-radius:50%; border:8px solid rgba(255,255,255,.25); border-top-color:#fff; animation:spin 1s linear infinite; }
-    @keyframes spin { to { transform:rotate(360deg); } }
+    :root { color-scheme: dark; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0f1a; color:#e5e7eb;}
+    .topbar{position:fixed; inset:0 0 auto 0; display:flex; gap:16px; align-items:center; padding:10px 12px; background:rgba(10,14,25,.85); backdrop-filter: blur(6px); border-bottom:1px solid #1f2937; z-index:10}
+    .pill{background:#111827; border:1px solid #374151; color:#9ca3af; border-radius:999px; padding:4px 10px; font-size:12px}
+    .group{display:flex; align-items:center; gap:10px}
+    .btn{cursor:pointer; background:#0f172a; color:#e5e7eb; border:1px solid #1f2937; border-radius:8px; padding:8px 12px; font-weight:600}
+    .btn:disabled{opacity:.5; cursor:not-allowed}
+    .field{display:flex; align-items:center; gap:6px}
+    #stats{margin-left:auto; color:#9ca3af; font-size:13px}
+    #stage{position:absolute; inset:48px 0 0 0; background:#000}
+    #overlay{position:absolute; inset:48px 0 0 0; pointer-events:none}
+    #toast{position:fixed; right:12px; bottom:12px; background:#111827; border:1px solid #374151; color:#e5e7eb; padding:8px 12px; border-radius:8px; font-size:13px; opacity:0; transform:translateY(6px); transition:all .25s}
+    #toast.show{opacity:1; transform:translateY(0)}
   </style>
 </head>
 <body>
-  <div id="wrap">
-    <iframe id="mp" allow="fullscreen; xr-spatial-tracking" allowfullscreen src=""></iframe>
-    <div id="captureGlass" aria-hidden="true"></div>
-
-    <div id="hud" role="toolbar" aria-label="Controls">
-      <div class="group">
-        <span class="pill">Phase 1.2</span>
-        <button class="btn" id="btnFullscreen">Fullscreen</button>
-        <button class="btn" id="btnReset">Reset</button>
+  <div class="topbar">
+    <span class="pill">Phase 1.2</span>
+    <div class="group">
+      <button class="btn" id="btnPlaceThreat">Place Threat</button>
+      <div class="field">
+        <label>Mode</label>
+        <select id="modeSelect" class="btn" style="padding:6px 10px; background:#0f172a;">
+          <option value="auto" selected>Auto (Recommended)</option>
+          <option value="evac">Force Evac</option>
+          <option value="shelter">Force Shelter</option>
+        </select>
       </div>
-
-      <div class="group" style="gap:16px; border-left:1px solid #2a2a2a; padding-left:12px;">
-        <button class="btn" id="btnPlaceThreat">Place Threat</button>
-<div class="field"><label>Mode</label>
-<select id="modeSelect" class="btn" style="padding:6px 10px; background:#0f172a;">
-<option value="auto" selected>Auto (Recommended)</option>
-<option value="evac">Force Evac</option>
-<option value="shelter">Force Shelter</option>
-</select></div>
-
-        <label class="pill" style="display:flex;gap:8px;align-items:center">
-          <input id="captureMode" type="checkbox" />
-          Capture Mode (click to add Exit/Shelter)
-        </label>
-
-        <button class="btn" id="btnAddExit">Add Exit</button>
-        <button class="btn" id="btnAddShelter">Add Shelter</button>
-
-        <button class="btn" id="btnSaveDest">Save to Server</button>
-        <button class="btn" id="btnDownloadDest">Download JSON</button>
-      </div>
-
-      <div class="group" style="gap:16px; border-left:1px solid #2a2a2a; padding-left:12px;">
-        <div class="field">
-          <label>Start X (m)</label>
-          <input id="sx" type="number" step="0.1" value="0">
-        </div>
-        <div class="field">
-          <label>Start Y (m)</label>
-          <input id="sy" type="number" step="0.1" value="0">
-        </div>
-        <button class="btn" id="btnRouteTest">Manual Test Route</button>
-      </div>
-
-      <div id="stats" class="pill">Length: —</div>
+      <button class="btn" id="btnReset">Reset</button>
     </div>
-
-    <div id="overlay">
-      <canvas id="routeLayer"></canvas>
-      
-    </div>
-
-    <div id="loading"><div class="spinner" aria-label="Loading"></div></div>
+    <div id="stats">Ready</div>
   </div>
 
+  <!-- Your viewer goes under #stage; we’ll allow either iframe or existing setup -->
+  <div id="stage">
+    <!-- Optional fallback iframe (only used if you don’t already create Showcase elsewhere) -->
+    <iframe id="showcase" style="width:100%;height:100%;border:0;display:none"></iframe>
+  </div>
+  <canvas id="overlay"></canvas>
+  <div id="toast"></div>
+
   <script>
-    /********* CONFIG *********/
-    const MODEL  = "1ghABoaBFPZ";
-    const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
-    const BUNDLE_PATH = "bundle/dist/showcase.html";
-    const BACKEND_URL = "https://bed-drums-vermont-dodge.trycloudflare.com";
+    /**********************
+     * Config
+     **********************/
+    const BACKEND_URL = (window.BACKEND_URL || location.origin); // adjust if backend runs on a different port
+    const MODEL_ID    = window.MODEL_ID || ""; // if you want iframe fallback, set your model id
+    const SDK_KEY     = window.MP_SDK_KEY || ""; // if you want iframe fallback, set your SDK key
+    const SDK_VERSION = window.MP_SDK_VERSION || "3.13";
 
-    /********* LOG *********/
-    const info  = (...a)=>console.log("[app]", ...a);
-    const warn  = (...a)=>console.warn("[app]", ...a);
-    const error = (...a)=>console.error("[app]", ...a);
-
-    /********* STATE *********/
-    const mp   = document.getElementById("mp");
-    const wrap = document.getElementById("wrap");
-    const cvs  = document.getElementById("routeLayer");
-    const ctx  = cvs.getContext("2d");
-    const loading = document.getElementById("loading");
-    const stats   = document.getElementById("stats");
-    const btnReset = document.getElementById("btnReset");
-    const btnRouteTest = document.getElementById("btnRouteTest");
-    const captureToggle = document.getElementById("captureMode");
-    const glass = document.getElementById("captureGlass");
-    const btnPlaceThreat = document.getElementById("btnPlaceThreat");
-    const btnAddExit = document.getElementById("btnAddExit");
-    const btnAddShelter = document.getElementById("btnAddShelter");
-
-    let SITE_BBOX = null;
-    let SCALE     = {s:1, offx:0, offy:0};
-    let _sdk      = null;
-
-    let threat = null;                   // {x,y}
-    let exits = [];
-    let shelters = [];
-    let captureKind = "exit";
-    let exitAutoId = 1, shelterAutoId = 1;
-
-    // Threat placement arming + “only inside” routing
-    let threatArmed = false;
-    let pendingRouteWhenInside = false;
-
-    function hideMarkers(){ /* phase 1: no exit/shelter dots */ }
-
-    /********* Fit & Draw *********/
-    function setLoading(on){ loading.style.display = on ? "flex" : "none"; }
-
-    function buildShowcaseUrl() {
-      return `${BUNDLE_PATH}?m=${encodeURIComponent(MODEL)}&applicationKey=${encodeURIComponent(APPKEY)}&brand=0&qs=1&play=1&q=18`;
+    /**********************
+     * Simple log + toast
+     **********************/
+    const stats = document.getElementById('stats');
+    const toastEl = document.getElementById('toast');
+    function info(msg){ console.log('[ARK]',msg); stats.textContent = msg; }
+    let toastTimer;
+    function toast(msg, ms=2000){
+      toastEl.textContent = msg;
+      toastEl.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(()=>toastEl.classList.remove('show'), ms);
     }
 
-    async function connectShowcase(timeoutMs = 15000) {
-      const t0 = performance.now();
-      while (performance.now() - t0 < timeoutMs) {
-        try {
-          const w = mp.contentWindow;
-          if (w?.MP_SDK?.connect) {
-            const sdk = await w.MP_SDK.connect(w, APPKEY);
-            window._mpSdk = _sdk = sdk;
-            info("SDK connected");
-            setLoading(false);
-            try { _sdk.Camera.pose.subscribe(()=>{ if (window._lastRoute) drawRoute(window._lastRoute); }); } catch(_) {}
-            return sdk;
-            
-      // Redraw route when camera pose changes to keep overlay aligned (no drift)
-      _sdk.Camera.pose.subscribe(()=>{
-        if (window._lastRoute) drawRoute(window._lastRoute);
-      });
-
-          }
-        } catch(e) {}
-        await new Promise(r=>setTimeout(r, 200));
-      }
-      throw new Error("Timed out waiting for MP_SDK.connect");
-    }
-
-    function fitFromBBox() {
-      const W = cvs.width, H = cvs.height;
-      if (!SITE_BBOX) { SCALE = {s:1, offx:0, offy:0}; return; }
-      const [minx, miny] = SITE_BBOX.min;
-      const [maxx, maxy] = SITE_BBOX.max;
-      const pad = 30;
-      const rw = Math.max(1e-6, maxx - minx);
-      const rh = Math.max(1e-6, maxy - miny);
-      const s  = Math.min((W - 2*pad)/rw, (H - 2*pad)/rh);
-      const offx = pad - minx*s + (W - 2*pad - rw*s)/2;
-      const offy = pad - miny*s + (H - 2*pad - rh*s)/2;
-      SCALE = {s, offx, offy};
-    }
-
-    function worldToCanvas(x, y) {
-      const H = cvs.height;
-      const {s, offx, offy} = SCALE;
-      return [ x*s + offx, H - (y*s + offy) ];
-    }
-
-    function resizeCanvas(){
-      cvs.width  = wrap.clientWidth;
-      cvs.height = wrap.clientHeight;
-      fitFromBBox();
+    /**********************
+     * Overlay canvas (fallback)
+     **********************/
+    const overlay = document.getElementById('overlay');
+    const ctx = overlay.getContext('2d');
+    let SITE_BBOX = null; // {min:[x,y], max:[x,y]} for bbox→canvas mapping
+    function resize(){
+      overlay.width = overlay.clientWidth;
+      overlay.height = overlay.clientHeight;
       if (window._lastRoute) drawRoute(window._lastRoute);
     }
-    window.addEventListener("resize", resizeCanvas);
-
-    function clearCanvas(){ ctx.clearRect(0,0,cvs.width,cvs.height); }
-
+    window.addEventListener('resize', resize);
+    function clearCanvas(){ ctx.clearRect(0,0,overlay.width, overlay.height); }
+    function fitFromBBox(){
+      // nothing to do; worldToCanvas uses bbox
+      if (window._lastRoute) drawRoute(window._lastRoute);
+    }
+    function worldToCanvas(x,y){
+      if (!SITE_BBOX){
+        // Identity fallback: center the scene
+        return [overlay.width/2 + x*10, overlay.height/2 - y*10];
+      }
+      const [minX,minY] = SITE_BBOX.min;
+      const [maxX,maxY] = SITE_BBOX.max;
+      const w = maxX - minX, h = maxY - minY;
+      const pad = 40;
+      const sx = (overlay.width  - 2*pad) / (w || 1);
+      const sy = (overlay.height - 2*pad) / (h || 1);
+      const s = Math.min(sx, sy);
+      const px = pad + (x - minX) * s;
+      const py = overlay.height - (pad + (y - minY) * s);
+      return [px, py];
+    }
     function drawRoute(route){
       clearCanvas();
       if (!route || route.length < 2) return;
 
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = "#00aa66";
+      const t = performance.now() * 0.05;
+
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+
+      // Outer glow
+      ctx.lineWidth = 14;
+      ctx.strokeStyle = "rgba(0, 200, 130, 0.25)";
       ctx.beginPath();
       route.forEach((p,i)=>{
         const [px,py] = worldToCanvas(p[0], p[1]);
@@ -217,15 +121,23 @@
       });
       ctx.stroke();
 
-      ctx.fillStyle = "#00aa66";
-      for (let i=0;i<route.length;i+=2){
-        const [px,py] = worldToCanvas(route[i][0], route[i][1]);
-        ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill();
-      }
+      // Core path (animated dash)
+      ctx.setLineDash([18, 10]);
+      ctx.lineDashOffset = -(performance.now()*0.05);
+      ctx.lineWidth = 7;
+      ctx.strokeStyle = "#00C882";
+      ctx.beginPath();
+      route.forEach((p,i)=>{
+        const [px,py] = worldToCanvas(p[0], p[1]);
+        if (i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
 
+      // Start/End markers
       const endpoints = [
         {p:route[0], color:"#3b82f6", label:"Start"},
-        {p:route[route.length-1], color:"#ef4444", label:"Exit/Shelter"}
+        {p:route[route.length-1], color:"#10b981", label:"Safe Point"}
       ];
       ctx.font = "12px system-ui";
       endpoints.forEach(({p,color,label})=>{
@@ -237,93 +149,142 @@
       });
     }
 
-    /********* Backend *********/
-    async function fetchSiteMeta(){
-      try{
-        const r = await fetch(`${BACKEND_URL}/site/meta`);
-        if(!r.ok) return;
-        const meta = await r.json();
-        info("[meta] units:", meta.units, "bbox_xy:", meta.bbox_xy);
-        if (meta && meta.bbox_xy?.min && meta.bbox_xy?.max) {
-          SITE_BBOX = { min: meta.bbox_xy.min, max: meta.bbox_xy.max };
-        }
-      }catch(_) {}
+    /**********************
+     * Matterport SDK hookup
+     **********************/
+    let _sdk = null;
+    let pendingRouteWhenInside = false;
+    let threat = null;
+
+    // If your project already defines connectShowcase(), we'll use it.
+    async function connectShowcaseFallback(){
+      const iframe = document.getElementById('showcase');
+      if (!iframe || !MODEL_ID || !SDK_KEY) {
+        console.warn('No iframe fallback. Provide MODEL_ID and MP_SDK_KEY, or ensure connectShowcase() exists.');
+        return null;
+      }
+      iframe.style.display = 'block';
+      const url = new URL('https://my.matterport.com/show/');
+      url.searchParams.set('m', MODEL_ID);
+      url.searchParams.set('play', '1');
+      url.searchParams.set('qs', '1');
+      iframe.src = url.toString();
+      return await window.MP_SDK.connect(iframe, SDK_KEY, SDK_VERSION);
     }
 
-    async function fetchDestinations(){
-      try{
-        const r = await fetch(`${BACKEND_URL}/destinations`);
-        if(!r.ok) return;
-        const d = await r.json();
-        exits = d.exits || [];
-        shelters = d.shelters || [];
-      }catch(_){}
+    async function getSdk(){
+      if (typeof window.connectShowcase === 'function'){
+        const sdk = await window.connectShowcase();
+        return sdk;
+      }
+      return await connectShowcaseFallback();
     }
 
-    async function saveDestinations(){
-      const r = await fetch(`${BACKEND_URL}/destinations`, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ exits, shelters })
-      });
-      if (!r.ok) throw new Error(await r.text());
-    }
-
-    function downloadDestinations(){
-      const blob = new Blob([JSON.stringify({exits, shelters}, null, 2)], {type:"application/json"});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = "destinations.json";
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }
-
-    /********* “Inside sweep?” helpers *********/
+    // Grounding check
     async function isGroundableAtCenter(){
-      if (!_sdk) return false;
-      const rect = mp.getBoundingClientRect();
-      const screenPosition = { x: rect.width/2, y: rect.height/2 };
-      try {
-        const hit = await _sdk.Renderer.getWorldPositionData(screenPosition);
-        return !!(hit && hit.position && Number.isFinite(hit.position.x));
-      } catch { return false; }
+      try{
+        const rect = overlay.getBoundingClientRect();
+        const x = rect.width/2, y = rect.height/2;
+        const hit = await _sdk.Renderer.getWorldPositionData({ x, y });
+        // Require a reasonably "floor-like" normal
+        return !!(hit && hit.normal && hit.normal.y > 0.7);
+      }catch(e){
+        return false;
+      }
     }
 
-    async function getWorldHitAtClientXY(clientX, clientY) {
-      const rect = mp.getBoundingClientRect();
-      const screenPosition = { x: clientX - rect.left, y: clientY - rect.top };
-      if (!Number.isFinite(screenPosition.x) || !Number.isFinite(screenPosition.y)) return null;
-      try { return await _sdk.Renderer.getWorldPositionData(screenPosition) || null; }
-      catch { return null; }
+    // In-scene mesh helpers (TubeGeometry) with overlay fallback
+    window._ARK = window._ARK || {};
+    _ARK.inScene = { available:false, scene:null, THREE:null, routeMesh:null };
+
+    function routeMeshFromPolyline(poly, floorY=0.1){
+      const THREE = _ARK.inScene.THREE;
+      if (!THREE || !Array.isArray(poly) || poly.length < 2) return null;
+      const pts = poly.map(([x,y]) => new THREE.Vector3(x, floorY, y));
+      const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.02);
+      const tubularSegments = Math.max(40, Math.floor(pts.length * 10));
+      const geom = new THREE.TubeGeometry(curve, tubularSegments, 0.12, 8, false);
+      const mat  = new THREE.MeshStandardMaterial({ color: 0x00c882, metalness:0, roughness:.6 });
+      mat.emissive = new (_ARK.inScene.THREE.Color)(0x00c882);
+      mat.emissiveIntensity = 0.35;
+      const mesh = new (_ARK.inScene.THREE.Mesh)(geom, mat);
+      mesh.name = 'ARK_ROUTE_MESH';
+      return mesh;
+    }
+    _ARK.addRouteInScene = (poly) => {
+      if (!_ARK.inScene.available || !_ARK.inScene.scene) return false;
+      if (_ARK.inScene.routeMesh){
+        _ARK.inScene.scene.remove(_ARK.inScene.routeMesh);
+        _ARK.inScene.routeMesh.geometry.dispose();
+        _ARK.inScene.routeMesh.material.dispose();
+        _ARK.inScene.routeMesh = null;
+      }
+      const mesh = routeMeshFromPolyline(poly, 0.10);
+      if (!mesh) return false;
+      _ARK.inScene.scene.add(mesh);
+      _ARK.inScene.routeMesh = mesh;
+      return true;
+    };
+    _ARK.clearRouteInScene = () => {
+      if (_ARK.inScene.routeMesh && _ARK.inScene.scene){
+        _ARK.inScene.scene.remove(_ARK.inScene.routeMesh);
+        _ARK.inScene.routeMesh.geometry.dispose();
+        _ARK.inScene.routeMesh.material.dispose();
+        _ARK.inScene.routeMesh = null;
+      }
+    };
+
+    // Public draw wrappers
+    function renderRoute(poly){
+      // Try in-scene first; fallback to overlay
+      if (!_ARK.addRouteInScene(poly)){
+        drawRoute(poly);
+      } else {
+        clearCanvas();
+      }
+    }
+    function resetRoute(){
+      _ARK.clearRouteInScene();
+      clearCanvas();
+      window._lastRoute = null;
     }
 
-    /********* Routing *********/
+    // Route main
     async function routeSafeAuto(){
-      // Only route if we're inside (groundable). If not, queue for later.
       const ok = await isGroundableAtCenter();
       if (!ok) {
         pendingRouteWhenInside = true;
-        info("[route] deferred until inside view");
+        toast("Move inside to compute safest route");
+        info("Deferred: move inside to compute route");
         return;
       }
-      if (!threat) { alert("Place a threat pin first."); return; }
+      if (!threat) { toast("Place a threat pin first."); return; }
 
+      // camera center (x,z) in world meters
       let cam = {x:0,y:0};
       try {
         const pos = await _sdk.Camera.getPosition();
         cam = { x: pos.x, y: pos.z };
-      } catch(_) {
-        const sx = parseFloat(document.getElementById("sx").value);
-        const sy = parseFloat(document.getElementById("sy").value);
-        cam = {x:sx, y:sy};
+      } catch {
+        // Optional fallback (e.g., manual)
       }
 
-      setLoading(true);
+      const mode = (document.getElementById("modeSelect")?.value || "auto").toLowerCase();
+
+      info("Routing...");
       try{
-        const res = await fetch(`${BACKEND_URL}/route_safe`, {
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ start:cam, threat })
-        });
+        let res;
+        if (mode === "auto") {
+          res = await fetch(`${BACKEND_URL}/route/auto`, {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ start:cam, threat })
+          });
+        } else {
+          res = await fetch(`${BACKEND_URL}/route_safe`, {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ start:cam, threat, prefer: mode === "evac" ? "exit" : "shelter" })
+          });
+        }
         if(!res.ok){
           const txt = await res.text();
           throw new Error(`Route error ${res.status}: ${txt}`);
@@ -338,173 +299,98 @@
         }
 
         window._lastRoute = out.route;
-        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m · ${out.decision?.toUpperCase?.()||"—"} → ${out.target_kind||"—"} (${out.target_id||"—"})`;
-        drawRoute(out.route);
+        const decision = out.mode_selected || out.decision || "—";
+        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m · ${decision}`;
+        renderRoute(out.route);
       }catch(e){
-        alert(e.message || e);
-      }finally{
-        setLoading(false);
+        console.error(e);
+        toast(e.message || "Route failed");
       }
     }
 
-    async function routeManualTest(){
-      const sx = parseFloat(document.getElementById("sx").value);
-      const sy = parseFloat(document.getElementById("sy").value);
-      const gx = sx + 10.0, gy = sy + 5.0;
-      setLoading(true);
-      try{
-        const res = await fetch(`${BACKEND_URL}/route`, {
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ start:{x:sx,y:sy}, goal:{x:gx,y:gy} })
-        });
-        if(!res.ok){
-          const txt = await res.text();
-          throw new Error(`Route error ${res.status}: ${txt}`);
+    // Threat placement
+    function enableThreatPlacement(){
+      toast("Click on the scene to place threat");
+      // Here we assume clicks feed us screen coords → world hit
+      window.addEventListener('click', async onClickOnce, { once:true });
+      async function onClickOnce(ev){
+        try{
+          const x = ev.clientX, y = ev.clientY;
+          const hit = await _sdk.Renderer.getWorldPositionData({x, y});
+          if (hit?.position){
+            if (hit.normal?.y > 0.4){
+              threat = { x: hit.position.x, y: hit.position.z };
+              toast(`Threat placed at (${threat.x.toFixed(2)}, ${threat.y.toFixed(2)})`);
+              routeSafeAuto();
+            } else {
+              toast("Not a floor hit; try again inside.");
+            }
+          }
+        }catch(e){
+          toast("Could not place threat here");
         }
-        const out = await res.json();
-        if (!SITE_BBOX && out.route?.length >= 2) {
-          const xs = out.route.map(p=>p[0]); const ys = out.route.map(p=>p[1]);
-          SITE_BBOX = { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
-          fitFromBBox();
-        }
-        window._lastRoute = out.route;
-        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m (manual test)`;
-        drawRoute(out.route);
-      }catch(e){ alert(e.message || e); }finally{ setLoading(false); }
-    }
-
-    /********* Interactions *********/
-    function clearOverlay(){
-      window._lastRoute = null;
-      clearCanvas();
-      stats.textContent = "Length: —";
-    }
-
-    function updateGlassState(){
-      const on = captureToggle.checked || threatArmed;
-      glass.style.pointerEvents = on ? "auto" : "none";
-      glass.style.cursor = on ? "crosshair" : "default";
-    }
-
-    captureToggle.addEventListener("change", ()=> updateGlassState());
-
-    btnPlaceThreat.addEventListener("click", ()=>{
-      threatArmed = true;
-      updateGlassState();
-    });
-
-    btnAddExit.addEventListener("click", ()=> { captureToggle.checked = true; captureKind = "exit"; updateGlassState(); });
-    btnAddShelter.addEventListener("click", ()=> { captureToggle.checked = true; captureKind = "shelter"; updateGlassState(); });
-
-    // Clicks inside iframe: only active when armed/capturing
-    async function onViewerClick(evt){
-      if (!(captureToggle.checked || threatArmed)) return;
-
-      const hit = await getWorldHitAtClientXY(evt.clientX, evt.clientY);
-      if (!hit || !hit.position) return;
-      const p = { x: hit.position.x, y: hit.position.z };
-
-      // Capture mode: add exits/shelters (no dots in Phase 1 UI)
-      if (captureToggle.checked) {
-        if (captureKind === "exit") exits.push({ id:`exit-${exitAutoId++}`, x:p.x, y:p.y });
-        else shelters.push({ id:`shelter-${shelterAutoId++}`, x:p.x, y:p.y });
-        return;
-      }
-
-      // Threat placement (only when armed)
-      if (threatArmed) {
-        threatArmed = false;
-        updateGlassState();
-        threat = p;
-        info("[threat] meters:", threat);
-
-        // route now (only if inside); otherwise defer until inside
-        await routeSafeAuto();
       }
     }
 
-    // Intercept on the glass and forward to iframe
-    glass.addEventListener("pointerup", (e) => {
-      if (!(captureToggle.checked || threatArmed)) return;
-      e.preventDefault(); e.stopPropagation();
-      const rect = mp.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+    // UI wiring
+    document.getElementById('btnPlaceThreat').addEventListener('click', enableThreatPlacement);
+    document.getElementById('btnReset').addEventListener('click', resetRoute);
+
+    // Boot
+    (async function boot(){
+      // Fit overlay canvas to stage
+      function syncOverlayRect(){
+        const stage = document.getElementById('stage');
+        overlay.style.left = stage.style.left;
+        overlay.style.top = stage.style.top;
+        overlay.style.width = stage.clientWidth + 'px';
+        overlay.style.height= stage.clientHeight + 'px';
+        overlay.width  = stage.clientWidth;
+        overlay.height = stage.clientHeight;
+      }
+      syncOverlayRect();
+      window.addEventListener('resize', syncOverlayRect);
+
+      _sdk = await getSdk();
+      if (!_sdk){ info('SDK not connected'); return; }
+      info('SDK connected');
+
+      // Pose redraw to prevent overlay drift (fallback path)
       try {
-        const PE = mp.contentWindow.PointerEvent || mp.contentWindow.MouseEvent;
-        const payload = { clientX:x, clientY:y, bubbles:true, cancelable:true, view: mp.contentWindow, pointerId:1, isPrimary:true, buttons:0, button:0 };
-        mp.contentWindow.dispatchEvent(new PE("pointerup", payload));
-        mp.contentWindow.document.dispatchEvent(new PE("pointerup", payload));
-      } catch (err) { warn("forward failed:", err); }
-    });
+        _sdk.Camera.pose.subscribe(()=>{ if (window._lastRoute) drawRoute(window._lastRoute); });
+      } catch {}
 
-    /********* Kickoff *********/
-    document.getElementById("btnFullscreen").addEventListener("click", async()=>{
-      try{ await (wrap.requestFullscreen?.() || wrap.webkitRequestFullscreen?.()); }catch(_) {}
-    });
-    btnReset.addEventListener("click", clearOverlay);
-    btnRouteTest.addEventListener("click", routeManualTest);
-    document.getElementById("btnSaveDest").addEventListener("click", async ()=>{
-      try{ await saveDestinations(); alert("Saved exits/shelters to server."); }catch(e){ alert(e.message||e); }
-    });
-    document.getElementById("btnDownloadDest").addEventListener("click", downloadDestinations);
-
-    (async function init(){
-      setLoading(true);
-      cvs.width  = wrap.clientWidth;
-      cvs.height = wrap.clientHeight;
-
-      // load Showcase
-      mp.src = buildShowcaseUrl();
-
-      mp.addEventListener("load", async () => {
-        try {
-          await connectShowcase(15000);
-
-          // clicks inside iframe
-          mp.contentWindow.addEventListener("pointerup", onViewerClick);
-
-          // Clear the overlay on *any* interaction that likely moves camera
-          const clearOnInteract = ()=> clearOverlay();
-          mp.contentWindow.addEventListener("pointerdown", clearOnInteract, {passive:true});
-          mp.contentWindow.addEventListener("wheel", clearOnInteract, {passive:true});
-          mp.contentWindow.addEventListener("keydown", clearOnInteract, {passive:true});
-
-          // Also clear when pose changes (movement/teleport); if a route was deferred,
-          // try to run it once we detect we’re inside.
-          let lastPose = null;
-          _sdk.Camera.pose.subscribe(async (pose)=>{
-            try {
-              if (!lastPose) { lastPose = pose; return; }
-              const moved = Math.hypot(
-                pose.position.x-lastPose.position.x,
-                pose.position.y-lastPose.position.y,
-                pose.position.z-lastPose.position.z
-              );
-              lastPose = pose;
-              if (moved > 0.01) {
-                if (window._lastRoute) clearOverlay();
-                if (pendingRouteWhenInside) {
-                  const ok = await isGroundableAtCenter();
-                  if (ok) { pendingRouteWhenInside = false; routeSafeAuto(); }
-                }
-              }
-            } catch {}
-          });
-        } catch (e) {
-          error(e);
-          setLoading(false);
+      // Try to expose in-scene render context
+      try{
+        if (_sdk.Renderer?.getRenderContext){
+          const ctx = await _sdk.Renderer.getRenderContext();
+          if (ctx?.scene){
+            _ARK.inScene.available = true;
+            _ARK.inScene.scene = ctx.scene;
+            _ARK.inScene.THREE = ctx.THREE || window.THREE || (window.top && window.top.THREE);
+            console.log('[ARK] In-scene route enabled');
+          }
         }
-      }, { once:true });
+      }catch(e){
+        console.warn('[ARK] No renderContext; overlay fallback in use.');
+      }
 
-      await fetchSiteMeta();
-      await fetchDestinations();
-      fitFromBBox();
-      updateGlassState();
-      hideMarkers();
-      setLoading(false);
+      // If user armed a route outside, compute once inside
+      try {
+        _sdk.Camera.pose.subscribe(async ()=>{
+          if (pendingRouteWhenInside){
+            const ok = await isGroundableAtCenter();
+            if (ok){
+              pendingRouteWhenInside = false;
+              routeSafeAuto();
+            }
+          }
+        });
+      } catch {}
     })();
+
+    // Initial size
+    resize();
   </script>
 </body>
 </html>
