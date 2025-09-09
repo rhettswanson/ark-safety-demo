@@ -38,25 +38,23 @@
     <div id="stats">Ready</div>
   </div>
 
-  <!-- Your viewer goes under #stage; we’ll allow either iframe or existing setup -->
   <div id="stage">
-    <!-- Optional fallback iframe (only used if you don’t already create Showcase elsewhere) -->
-    <iframe id="showcase" style="width:100%;height:100%;border:0;display:none"></iframe>
+    <iframe id="showcase" style="width:100%;height:100%;border:0;display:block"></iframe>
   </div>
   <canvas id="overlay"></canvas>
   <div id="toast"></div>
 
   <script>
     /**********************
-     * Config
+     * Config (your values)
      **********************/
-    const MODEL  = "1ghABoaBFPZ";
-    const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
-    const BUNDLE_PATH = "bundle/dist/showcase.html";
     const BACKEND_URL = "https://bed-drums-vermont-dodge.trycloudflare.com";
+    const MODEL_ID    = "1ghABoaBFPZ";
+    const SDK_KEY     = "akqd0dp3hr9wz4eu70zd1rsab";
+    const SDK_VERSION = "3.13";
 
     /**********************
-     * Simple log + toast
+     * HUD helpers
      **********************/
     const stats = document.getElementById('stats');
     const toastEl = document.getElementById('toast');
@@ -74,7 +72,7 @@
      **********************/
     const overlay = document.getElementById('overlay');
     const ctx = overlay.getContext('2d');
-    let SITE_BBOX = null; // {min:[x,y], max:[x,y]} for bbox→canvas mapping
+    let SITE_BBOX = null;
     function resize(){
       overlay.width = overlay.clientWidth;
       overlay.height = overlay.clientHeight;
@@ -83,12 +81,10 @@
     window.addEventListener('resize', resize);
     function clearCanvas(){ ctx.clearRect(0,0,overlay.width, overlay.height); }
     function fitFromBBox(){
-      // nothing to do; worldToCanvas uses bbox
       if (window._lastRoute) drawRoute(window._lastRoute);
     }
     function worldToCanvas(x,y){
       if (!SITE_BBOX){
-        // Identity fallback: center the scene
         return [overlay.width/2 + x*10, overlay.height/2 - y*10];
       }
       const [minX,minY] = SITE_BBOX.min;
@@ -106,12 +102,11 @@
       clearCanvas();
       if (!route || route.length < 2) return;
 
-      const t = performance.now() * 0.05;
-
+      // Apple-like look: glow + animated dash
       ctx.lineJoin = "round";
-      ctx.lineCap = "round";
+      ctx.lineCap  = "round";
 
-      // Outer glow
+      // Glow
       ctx.lineWidth = 14;
       ctx.strokeStyle = "rgba(0, 200, 130, 0.25)";
       ctx.beginPath();
@@ -121,7 +116,7 @@
       });
       ctx.stroke();
 
-      // Core path (animated dash)
+      // Core (animated dash)
       ctx.setLineDash([18, 10]);
       ctx.lineDashOffset = -(performance.now()*0.05);
       ctx.lineWidth = 7;
@@ -156,44 +151,38 @@
     let pendingRouteWhenInside = false;
     let threat = null;
 
-    // If your project already defines connectShowcase(), we'll use it.
-    async function connectShowcaseFallback(){
+    // Boot iframe with your model + connect SDK
+    async function getSdk(){
       const iframe = document.getElementById('showcase');
-      if (!iframe || !1ghABoaBFPZ || !akqd0dp3hr9wz4eu70zd1rsab) {
-        console.warn('No iframe fallback. Provide MODEL_ID and MP_SDK_KEY, or ensure connectShowcase() exists.');
-        return null;
-      }
-      iframe.style.display = 'block';
       const url = new URL('https://my.matterport.com/show/');
       url.searchParams.set('m', MODEL_ID);
       url.searchParams.set('play', '1');
       url.searchParams.set('qs', '1');
       iframe.src = url.toString();
+
+      if (!window.MP_SDK) {
+        await new Promise(r => {
+          const t = setInterval(()=>{ if (window.MP_SDK){ clearInterval(t); r(); } }, 100);
+        });
+      }
       return await window.MP_SDK.connect(iframe, SDK_KEY, SDK_VERSION);
     }
 
-    async function getSdk(){
-      if (typeof window.connectShowcase === 'function'){
-        const sdk = await window.connectShowcase();
-        return sdk;
-      }
-      return await connectShowcaseFallback();
-    }
-
-    // Grounding check
+    // Grounding check (don’t route until we’re “inside”)
     async function isGroundableAtCenter(){
       try{
         const rect = overlay.getBoundingClientRect();
         const x = rect.width/2, y = rect.height/2;
         const hit = await _sdk.Renderer.getWorldPositionData({ x, y });
-        // Require a reasonably "floor-like" normal
         return !!(hit && hit.normal && hit.normal.y > 0.7);
       }catch(e){
         return false;
       }
     }
 
-    // In-scene mesh helpers (TubeGeometry) with overlay fallback
+    /**********************
+     * In-scene TubeGeometry (fallback to overlay)
+     **********************/
     window._ARK = window._ARK || {};
     _ARK.inScene = { available:false, scene:null, THREE:null, routeMesh:null };
 
@@ -234,9 +223,7 @@
       }
     };
 
-    // Public draw wrappers
     function renderRoute(poly){
-      // Try in-scene first; fallback to overlay
       if (!_ARK.addRouteInScene(poly)){
         drawRoute(poly);
       } else {
@@ -249,7 +236,9 @@
       window._lastRoute = null;
     }
 
-    // Route main
+    /**********************
+     * Routing flow (matches other file)
+     **********************/
     async function routeSafeAuto(){
       const ok = await isGroundableAtCenter();
       if (!ok) {
@@ -260,14 +249,12 @@
       }
       if (!threat) { toast("Place a threat pin first."); return; }
 
-      // camera center (x,z) in world meters
+      // Camera start (x,z) in meters
       let cam = {x:0,y:0};
       try {
         const pos = await _sdk.Camera.getPosition();
         cam = { x: pos.x, y: pos.z };
-      } catch {
-        // Optional fallback (e.g., manual)
-      }
+      } catch {}
 
       const mode = (document.getElementById("modeSelect")?.value || "auto").toLowerCase();
 
@@ -291,6 +278,7 @@
         }
         const out = await res.json();
 
+        // Fit bbox for overlay mapping (used for fallback and labels)
         if (!SITE_BBOX && out.route?.length >= 2) {
           const xs = out.route.map(p=>p[0]);
           const ys = out.route.map(p=>p[1]);
@@ -308,17 +296,15 @@
       }
     }
 
-    // Threat placement
     function enableThreatPlacement(){
       toast("Click on the scene to place threat");
-      // Here we assume clicks feed us screen coords → world hit
       window.addEventListener('click', onClickOnce, { once:true });
       async function onClickOnce(ev){
         try{
           const x = ev.clientX, y = ev.clientY;
           const hit = await _sdk.Renderer.getWorldPositionData({x, y});
-          if (hit?.position){
-            if (hit.normal?.y > 0.4){
+          if (hit && hit.position){
+            if (hit.normal && hit.normal.y > 0.4){
               threat = { x: hit.position.x, y: hit.position.z };
               toast(`Threat placed at (${threat.x.toFixed(2)}, ${threat.y.toFixed(2)})`);
               routeSafeAuto();
@@ -332,13 +318,11 @@
       }
     }
 
-    // UI wiring
     document.getElementById('btnPlaceThreat').addEventListener('click', enableThreatPlacement);
     document.getElementById('btnReset').addEventListener('click', resetRoute);
 
-    // Boot
     (async function boot(){
-      // Fit overlay canvas to stage
+      // Keep overlay sized to the stage (prevents drift)
       function syncOverlayRect(){
         const stage = document.getElementById('stage');
         overlay.style.left = stage.style.left;
@@ -355,16 +339,16 @@
       if (!_sdk){ info('SDK not connected'); return; }
       info('SDK connected');
 
-      // Pose redraw to prevent overlay drift (fallback path)
+      // Overlay re-draw on camera pose (fallback keeps “glued”)
       try {
         _sdk.Camera.pose.subscribe(()=>{ if (window._lastRoute) drawRoute(window._lastRoute); });
       } catch {}
 
-      // Try to expose in-scene render context
+      // Try to expose in-scene render context (auto-on if available)
       try{
-        if (_sdk.Renderer?.getRenderContext){
+        if (_sdk.Renderer && typeof _sdk.Renderer.getRenderContext === 'function'){
           const ctx = await _sdk.Renderer.getRenderContext();
-          if (ctx?.scene){
+          if (ctx && ctx.scene){
             _ARK.inScene.available = true;
             _ARK.inScene.scene = ctx.scene;
             _ARK.inScene.THREE = ctx.THREE || window.THREE || (window.top && window.top.THREE);
@@ -375,7 +359,7 @@
         console.warn('[ARK] No renderContext; overlay fallback in use.');
       }
 
-      // If user armed a route outside, compute once inside
+      // If user queued routing while outside, auto-run once inside
       try {
         _sdk.Camera.pose.subscribe(async ()=>{
           if (pendingRouteWhenInside){
@@ -389,8 +373,9 @@
       } catch {}
     })();
 
-    // Initial size
     resize();
   </script>
+  <!-- Matterport SDK loader -->
+  <script src="https://static.matterport.com/showcase-sdk/latest.js"></script>
 </body>
 </html>
