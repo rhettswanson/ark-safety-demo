@@ -38,7 +38,7 @@
     #routeLayer { position:absolute; inset:0; pointer-events:none; } /* never steal clicks */
     #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
 
-    /* Transparent capture layer (enabled only when Capture Mode is ON) */
+    /* Transparent capture layer (enabled when Capture Mode OR Threat Place is armed) */
     #captureGlass {
       position:absolute; inset:0; z-index:26;     /* above iframe, below HUD */
       pointer-events:none;                        /* OFF by default; toggled ON in JS */
@@ -55,7 +55,7 @@
   <div id="wrap">
     <iframe id="mp" allow="fullscreen; xr-spatial-tracking" allowfullscreen src=""></iframe>
 
-    <!-- capture layer -->
+    <!-- shared capture/placement layer -->
     <div id="captureGlass" aria-hidden="true"></div>
 
     <div id="hud" role="toolbar" aria-label="Controls">
@@ -66,22 +66,19 @@
       </div>
 
       <div class="group" style="gap:16px; border-left:1px solid #2a2a2a; padding-left:12px;">
+        <!-- NEW: “Place Threat” arms one-click placement in any mode -->
+        <button class="btn" id="btnPlaceThreat" title="Arm a single click to drop a red threat pin in any viewer mode">Place Threat</button>
+
         <label class="pill" style="display:flex;gap:8px;align-items:center">
           <input id="captureMode" type="checkbox" />
-          Capture Mode (click to add points)
+          Capture Mode (click to add Exit/Shelter)
         </label>
 
-        <!-- capture type toggle -->
+        <!-- capture type toggle (used when Capture Mode is ON) -->
         <div class="seg" id="capType">
           <button class="exit active" data-kind="exit" type="button">Add Exit</button>
           <button class="shelter" data-kind="shelter" type="button">Add Shelter</button>
         </div>
-
-        <!-- NEW: auto-download backup toggle -->
-        <label class="pill" style="display:flex;gap:8px;align-items:center">
-          <input id="autoDl" type="checkbox" />
-          Auto-download backup
-        </label>
 
         <button class="btn" id="btnSaveDest">Save to Server</button>
         <button class="btn" id="btnDownloadDest">Download JSON</button>
@@ -92,8 +89,6 @@
           <label>Start X (m)</label>
           <input id="sx" type="number" step="0.1" value="0">
         </div>
-      </div>
-      <div class="group">
         <div class="field">
           <label>Start Y (m)</label>
           <input id="sy" type="number" step="0.1" value="0">
@@ -136,7 +131,7 @@
     const captureToggle = document.getElementById("captureMode");
     const glass = document.getElementById("captureGlass");
     const capType = document.getElementById("capType");
-    const autoDl = document.getElementById("autoDl");
+    const btnPlaceThreat = document.getElementById("btnPlaceThreat");
 
     let SITE_BBOX = null;                // {min:[x,y], max:[x,y]}
     let SCALE     = {s:1, offx:0, offy:0}; // meters->pixels
@@ -149,14 +144,15 @@
     let captureKind = "exit";            // current type (exit|shelter)
     let exitAutoId = 1, shelterAutoId = 1;
 
-    // ===== Persistence helpers =====
+    // “armed” placement flow for threat
+    let threatArmed = false;
+
+    // ===== Persistence helpers (optional; kept from your previous version) =====
     const LS_KEY = "ark_destinations_v1";
     let saveTimer = null;
 
     function persistLocal() {
-      try {
-        localStorage.setItem(LS_KEY, JSON.stringify({ exits, shelters }));
-      } catch {}
+      try { localStorage.setItem(LS_KEY, JSON.stringify({ exits, shelters })); } catch {}
     }
     function restoreLocal() {
       try {
@@ -179,12 +175,11 @@
           });
           if (!r.ok) throw new Error(await r.text());
         } catch(e) {
-          console.warn("Server save failed (will keep local backup):", e?.message || e);
+          console.warn("Server save failed (kept local backup):", e?.message || e);
         }
-      }, 1000); // 1s debounce
+      }, 1000);
     }
-    function maybeAutoDownload() {
-      if (!autoDl.checked) return;
+    function downloadDestinations(){
       const blob = new Blob([JSON.stringify({exits, shelters}, null, 2)], {type:"application/json"});
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -311,6 +306,11 @@
         const [px,py] = worldToCanvas(p.x, p.y);
         ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fill();
       }
+      // threat pin (red)
+      if (threat) {
+        const [px,py] = worldToCanvas(threat.x, threat.y);
+        ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.fill();
+      }
     }
 
     /********* Backend helpers *********/
@@ -343,24 +343,14 @@
       if (!r.ok) throw new Error(await r.text());
     }
 
-    function downloadDestinations(){
-      const blob = new Blob([JSON.stringify({exits, shelters}, null, 2)], {type:"application/json"});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = "destinations.json";
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }
-
     async function routeSafeAuto(){
-      if (!threat) { alert("Place a threat pin by clicking in the viewer."); return; }
+      if (!threat) { alert("Place a threat pin first."); return; }
       // Start from camera (x,z -> x,y)
       let cam = {x:0,y:0};
       try {
         const pos = await _sdk.Camera.getPosition();
         cam = { x: pos.x, y: pos.z };
       } catch(_) {
-        // fallback to manual fields
         const sx = parseFloat(document.getElementById("sx").value);
         const sy = parseFloat(document.getElementById("sy").value);
         cam = {x:sx, y:sy};
@@ -387,7 +377,7 @@
         }
 
         window._lastRoute = out.route;
-        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m · ${out.decision.toUpperCase()} → ${out.target_kind} (${out.target_id})`;
+        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m · ${out.decision?.toUpperCase?.()||"—"} → ${out.target_kind||"—"} (${out.target_id||"—"})`;
         drawRoute(out.route);
       }catch(e){
         alert(e.message || e);
@@ -399,7 +389,7 @@
     async function routeManualTest(){
       const sx = parseFloat(document.getElementById("sx").value);
       const sy = parseFloat(document.getElementById("sy").value);
-      const gx = sx + 10.0, gy = sy + 5.0; // just a smoke test target
+      const gx = sx + 10.0, gy = sy + 5.0;
       setLoading(true);
       try{
         const res = await fetch(`${BACKEND_URL}/route`, {
@@ -433,18 +423,18 @@
       drawMarkers();
       persistLocal();
       saveDestinationsServerDebounced();
-      maybeAutoDownload();
     }
 
+    // Main click handler inside iframe: either capture Exit/Shelter or place Threat + route
     async function onViewerClick(evt){
       try{
-        const hits = await _sdk.Pointer.raycast(evt.clientX, evt.clientY, { include: ['floor'] });
+        // broader include helps in Floor Plan/Dollhouse
+        const hits = await _sdk.Pointer.raycast(evt.clientX, evt.clientY, { include: ['floor', 'mesh'] });
         if (!hits.length) return;
         const hit = hits[0];
         const p = { x: hit.position.x, y: hit.position.z }; // (x,z)->(x,y)
 
         if (captureToggle.checked) {
-          // auto-assign based on toggle (no prompt)
           if (captureKind === "exit") {
             const id = `exit-${exitAutoId++}`;
             exits.push({ id, x: p.x, y: p.y });
@@ -455,24 +445,23 @@
             drawCaptureMarker(p, "#60a5fa");
           }
           drawMarkers();
-
-          // NEW: auto-persist
           persistLocal();
           saveDestinationsServerDebounced();
-          maybeAutoDownload();
           return;
         }
 
-        // Normal click: set threat pin and auto-route
+        // Threat placement flow
         threat = p;
-        drawThreatPin(p);
+        drawMarkers(); // draws the red threat as well
+
+        // If this was an armed placement, disarm so navigation works again
+        if (threatArmed) {
+          threatArmed = false;
+          updateGlassState();
+        }
+
         await routeSafeAuto();
       }catch(e){ /* ignore */ }
-    }
-
-    function drawThreatPin(p){
-      const [px,py] = worldToCanvas(p.x, p.y);
-      ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.fill();
     }
 
     function drawCaptureMarker(p, color){
@@ -481,25 +470,27 @@
       markers.push({p,color});
     }
 
-    /* ===== Capture UI ===== */
-    function setCaptureActive(on){
+    /* ===== Capture / Place Threat UI ===== */
+    function updateGlassState(){
+      // Enable glass while Capture Mode is ON, or if threat placement is armed
+      const on = captureToggle.checked || threatArmed;
       glass.style.pointerEvents = on ? "auto" : "none";
-      glass.style.cursor = on ? "crosshair" : "default";
+      // Cursor reflects current action
+      glass.style.cursor = captureToggle.checked ? "crosshair" : (threatArmed ? "crosshair" : "default");
     }
-    captureToggle.addEventListener("change", (e)=> setCaptureActive(e.target.checked));
 
-    // Toggle buttons
-    capType.addEventListener("click", (e)=>{
-      const btn = e.target.closest("button[data-kind]");
-      if (!btn) return;
-      captureKind = btn.dataset.kind; // "exit" | "shelter"
-      for (const b of capType.querySelectorAll("button")) b.classList.remove("active");
-      btn.classList.add("active");
+    captureToggle.addEventListener("change", ()=> updateGlassState());
+
+    btnPlaceThreat.addEventListener("click", ()=>{
+      threatArmed = true;           // arm a single placement click
+      updateGlassState();
     });
 
-    // Intercept clicks and forward to iframe (no Shift needed now)
+    // Intercept clicks and forward to iframe:
+    // - If Capture Mode ON → add exit/shelter (via onViewerClick)
+    // - If threatArmed → place threat (via onViewerClick)
     glass.addEventListener("pointerup", (e) => {
-      if (!captureToggle.checked) return;
+      if (!(captureToggle.checked || threatArmed)) return;
 
       e.preventDefault();
       e.stopPropagation();
@@ -521,13 +512,11 @@
           buttons: 0,
           button: 0
         };
-        const evt1 = new PE("pointerup", payload);
-        const evt2 = new PE("pointerup", payload);
-
+        // Dispatch to both window + document to be safe
         const win = mp.contentWindow;
         const doc = win.document;
-        win.dispatchEvent(evt1);
-        doc.dispatchEvent(evt2);
+        win.dispatchEvent(new PE("pointerup", payload));
+        doc.dispatchEvent(new PE("pointerup", payload));
       } catch (err) {
         console.warn("captureGlass forward failed:", err);
       }
@@ -556,7 +545,13 @@
       mp.addEventListener("load", async () => {
         try {
           await connectShowcase(15000);
+          // clicks inside iframe
           mp.contentWindow.addEventListener("pointerup", onViewerClick);
+
+          // NEW: when user double-clicks to enter a sweep, compute route if a threat exists
+          mp.contentWindow.addEventListener("dblclick", async () => {
+            try { if (threat) await routeSafeAuto(); } catch (e) { console.warn("dblclick route failed", e); }
+          });
         } catch (e) {
           error(e);
           setLoading(false);
@@ -565,16 +560,11 @@
 
       // 3) pull site bbox + destinations
       await fetchSiteMeta();
-
-      // Try server first; if empty, restore local backup
       await fetchDestinations();
-      if (exits.length === 0 && shelters.length === 0) {
-        const restored = restoreLocal();
-        if (restored) info("Restored destinations from localStorage backup");
-      }
+      if (exits.length === 0 && shelters.length === 0) restoreLocal();
 
       fitFromBBox();
-      setCaptureActive(captureToggle.checked); // init glass state
+      updateGlassState(); // init glass state
       drawMarkers();
       setLoading(false);
     })();
