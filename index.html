@@ -31,7 +31,7 @@
     #routeLayer { position:absolute; inset:0; pointer-events:none; } /* never steal clicks */
     #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
 
-    /* NEW: transparent capture layer that sits above the iframe when Capture Mode is ON */
+    /* Transparent capture layer (enabled only when Capture Mode is ON) */
     #captureGlass {
       position:absolute; inset:0; z-index:26;     /* above iframe, below HUD */
       pointer-events:none;                        /* OFF by default; toggled ON in JS */
@@ -48,7 +48,7 @@
   <div id="wrap">
     <iframe id="mp" allow="fullscreen; xr-spatial-tracking" allowfullscreen src=""></iframe>
 
-    <!-- NEW: capture layer -->
+    <!-- capture layer -->
     <div id="captureGlass" aria-hidden="true"></div>
 
     <div id="hud" role="toolbar" aria-label="Controls">
@@ -345,13 +345,12 @@
     }
 
     async function onViewerClick(evt){
-      // Raycast to floor
+      console.log("[iframe onViewerClick] evt", { x: evt.clientX, y: evt.clientY, shift: evt.shiftKey });
       try{
         const hits = await _sdk.Pointer.raycast(evt.clientX, evt.clientY, { include: ['floor'] });
         if (!hits.length) return;
         const hit = hits[0];
-        // MP uses x,z in plan view (y is up) → map to (x,y)
-        const p = { x: hit.position.x, y: hit.position.z };
+        const p = { x: hit.position.x, y: hit.position.z }; // (x,z)->(x,y)
 
         if (captureToggle.checked && evt.shiftKey) {
           const label = prompt('Label as "exit:<name>" or "shelter:<name>"', 'exit:front');
@@ -359,7 +358,6 @@
           const [kind, id] = label.split(':');
           const rec = { id: (id||`pt-${Date.now()}`), x:p.x, y:p.y };
           if (kind === 'exit') exits.push(rec); else shelters.push(rec);
-          // draw a small capture mark
           drawCaptureMarker(p, kind === 'exit' ? "#10b981" : "#60a5fa");
           return;
         }
@@ -372,7 +370,6 @@
     }
 
     function drawThreatPin(p){
-      // small red marker at threat location
       const [px,py] = worldToCanvas(p.x, p.y);
       ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.fill();
     }
@@ -383,44 +380,52 @@
       markers.push({p,color});
     }
 
-    /* ===== NEW: Capture glass controls ===== */
+    /* ===== Capture glass controls ===== */
     function setCaptureActive(on){
       glass.style.pointerEvents = on ? "auto" : "none";
       glass.style.cursor = on ? "crosshair" : "default";
     }
     captureToggle.addEventListener("change", (e)=> setCaptureActive(e.target.checked));
 
-    // Intercept Shift+Click above the iframe and raycast inside Showcase
-    glass.addEventListener("pointerdown", (e) => {
-  if (!captureToggle.checked || !e.shiftKey) return;
+    // Intercept Shift+Click and forward a real PointerEvent to the iframe (window & document)
+    glass.addEventListener("pointerup", (e) => {
+      if (!captureToggle.checked || !e.shiftKey) return;
 
-  // Eat the event so Showcase doesn't navigate
-  e.preventDefault();
-  e.stopPropagation();
+      e.preventDefault();
+      e.stopPropagation();
 
-  // Convert to iframe-local coords
-  const rect = mp.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
+      const rect = mp.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      console.log("[captureGlass] intercept", { x, y });
 
-  // Forward a synthetic event into the iframe.
-  // Your onViewerClick (attached to mp.contentWindow) will run
-  // and do the MP_SDK raycast exactly as before.
-  const evt = new mp.contentWindow.MouseEvent("pointerup", {
-    clientX: x,
-    clientY: y,
-    shiftKey: true,
-    bubbles: true,
-    cancelable: true,
-    view: mp.contentWindow
-  });
+      try {
+        const PE = mp.contentWindow.PointerEvent || mp.contentWindow.MouseEvent;
+        const payload = {
+          clientX: x,
+          clientY: y,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+          view: mp.contentWindow,
+          pointerId: 1,
+          isPrimary: true,
+          buttons: 0,
+          button: 0
+        };
+        const evt1 = new PE("pointerup", payload);
+        const evt2 = new PE("pointerup", payload);
 
-  try {
-    mp.contentWindow.dispatchEvent(evt);
-  } catch (err) {
-    console.warn("captureGlass forward failed:", err);
-  }
-});
+        const win = mp.contentWindow;
+        const doc = win.document;
+        const ok1 = win.dispatchEvent(evt1);
+        const ok2 = doc.dispatchEvent(evt2);
+
+        console.log("[captureGlass] forwarded pointerup → iframe", { ok1, ok2, x, y });
+      } catch (err) {
+        console.warn("captureGlass forward failed:", err);
+      }
+    });
 
     /********* UI wiring *********/
     document.getElementById("btnFullscreen").addEventListener("click", async()=>{
@@ -445,7 +450,7 @@
       mp.addEventListener("load", async () => {
         try {
           await connectShowcase(15000);
-          // click anywhere on viewer to place threat or capture points (normal mode)
+          // clicks inside iframe
           mp.contentWindow.addEventListener("pointerup", onViewerClick);
         } catch (e) {
           error(e);
@@ -453,11 +458,11 @@
         }
       }, { once:true });
 
-      // 3) pull site bbox for consistent scaling + destinations
+      // 3) pull site bbox + destinations
       await fetchSiteMeta();
       await fetchDestinations();
       fitFromBBox();
-      setCaptureActive(captureToggle.checked); // initialize glass state
+      setCaptureActive(captureToggle.checked); // init glass state
       setLoading(false);
     })();
   </script>
