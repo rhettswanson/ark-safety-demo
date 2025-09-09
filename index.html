@@ -109,12 +109,12 @@
     /********* CONFIG *********/
     const MODEL  = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
-    const BUNDLE_PATH = "bundle/dist/showcase.html";   // SDK bundle
+    const BUNDLE_PATH = "bundle/dist/showcase.html";
     const BACKEND_URL = "https://filter-fd-configured-forecast.trycloudflare.com";
 
-    // UI preferences
-    const SHOW_DEST_MARKERS = false;  // <-- hide exit/shelter dots
-    const SHOW_BREADCRUMBS  = false;  // <-- hide breadcrumb dots
+    // UI prefs
+    const SHOW_DEST_MARKERS = false; // hide exit/shelter dots
+    const SHOW_BREADCRUMBS  = false; // hide route breadcrumbs
 
     /********* LOGGING *********/
     const info  = (...a)=>console.log("[app]", ...a);
@@ -135,21 +135,20 @@
     const capType = document.getElementById("capType");
     const btnPlaceThreat = document.getElementById("btnPlaceThreat");
 
-    let SITE_BBOX = null;                // {min:[x,y], max:[x,y]}
-    let SCALE     = {s:1, offx:0, offy:0}; // meters->pixels
+    let SITE_BBOX = null;
+    let SCALE     = {s:1, offx:0, offy:0};
     let _sdk      = null;
 
     let threat = null;                   // {x,y}
     let exits = [];                      // [{id,x,y}]
     let shelters = [];                   // [{id,x,y}]
-    let markers = [];                    // drawn capture points (we won’t render if SHOW_DEST_MARKERS=false)
-    let captureKind = "exit";            // current type (exit|shelter)
+    let markers = [];
+    let captureKind = "exit";
     let exitAutoId = 1, shelterAutoId = 1;
 
-    // armed placement flow for threat
     let threatArmed = false;
 
-    // debounced save
+    // local persistence
     const LS_KEY = "ark_destinations_v1";
     let saveTimer = null;
 
@@ -196,7 +195,6 @@
       return `${BUNDLE_PATH}?m=${encodeURIComponent(MODEL)}&applicationKey=${encodeURIComponent(APPKEY)}&brand=0&qs=1&play=1&q=18`;
     }
 
-    /** Connect MP SDK once iframe loads */
     async function connectShowcase(timeoutMs = 15000) {
       const t0 = performance.now();
       while (performance.now() - t0 < timeoutMs) {
@@ -209,7 +207,7 @@
             setLoading(false);
             return sdk;
           }
-        } catch(e) { /* retry loop */ }
+        } catch(e) {}
         await new Promise(r=>setTimeout(r, 200));
       }
       throw new Error("Timed out waiting for MP_SDK.connect");
@@ -240,7 +238,7 @@
       const H = cvs.height;
       const {s, offx, offy} = SCALE;
       const px =  x*s + offx;
-      const py =  H - (y*s + offy);   // Y-up meters -> Y-down pixels
+      const py =  H - (y*s + offy);
       return [px, py];
     }
 
@@ -253,15 +251,12 @@
     }
     window.addEventListener("resize", resizeCanvas);
 
-    function clearCanvas(){
-      ctx.clearRect(0,0,cvs.width,cvs.height);
-    }
+    function clearCanvas(){ ctx.clearRect(0,0,cvs.width,cvs.height); }
 
     function drawRoute(route){
       clearCanvas();
       if (!route || route.length < 2) { drawMarkers(); return; }
 
-      // polyline
       ctx.lineWidth = 3;
       ctx.strokeStyle = "#00aa66";
       ctx.beginPath();
@@ -271,7 +266,6 @@
       });
       ctx.stroke();
 
-      // breadcrumbs (optional)
       if (SHOW_BREADCRUMBS){
         ctx.fillStyle = "#00aa66";
         for (let i=0;i<route.length;i+=2){
@@ -280,7 +274,6 @@
         }
       }
 
-      // endpoints labels
       const endpoints = [
         {p:route[0], color:"#3b82f6", label:"Start"},
         {p:route[route.length-1], color:"#ef4444", label:"Exit/Shelter"}
@@ -298,7 +291,6 @@
     }
 
     function drawMarkers(){
-      // exits / shelters hidden unless enabled
       if (SHOW_DEST_MARKERS){
         ctx.fillStyle = "#10b981";
         for (const p of exits) {
@@ -311,7 +303,6 @@
           ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fill();
         }
       }
-      // threat pin (always show if set)
       if (threat) {
         const [px,py] = worldToCanvas(threat.x, threat.y);
         ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.fill();
@@ -328,9 +319,8 @@
           SITE_BBOX = { min: meta.bbox_xy.min, max: meta.bbox_xy.max };
           info("[meta] units:", meta.units, "bbox_xy:", meta.bbox_xy);
         }
-      }catch(_) { /* optional */ }
+      }catch(_) {}
     }
-
     async function fetchDestinations(){
       try{
         const r = await fetch(`${BACKEND_URL}/destinations`);
@@ -340,7 +330,6 @@
         shelters = d.shelters || [];
       }catch(_){}
     }
-
     async function saveDestinations(){
       const r = await fetch(`${BACKEND_URL}/destinations`, {
         method:"POST", headers:{"Content-Type":"application/json"},
@@ -351,7 +340,6 @@
 
     async function routeSafeAuto(){
       if (!threat) { alert("Place a threat pin first."); return; }
-      // Start from camera (x,z -> x,y)
       let cam = {x:0,y:0};
       try {
         const pos = await _sdk.Camera.getPosition();
@@ -392,40 +380,38 @@
       }
     }
 
-    /********* Placement + Capture (fixed raycast) *********/
+    /********* Renderer-based hit testing *********/
     function updateGlassState(){
       const on = captureToggle.checked || threatArmed;
       glass.style.pointerEvents = on ? "auto" : "none";
       glass.style.cursor = on ? "crosshair" : "default";
     }
 
-    // convert a click on the glass into iframe-local clientX/Y
     function toIframeClientXY(ev){
       const rect = mp.getBoundingClientRect();
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-      return {x, y};
+      return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
     }
 
-    // Raycast using the SDK directly (no synthetic events)
-    async function raycastAtIframeClient(x, y){
+    async function getWorldHitAt(x, y){
       try {
-        const hits = await _sdk.Pointer.raycast(x, y, { include: ['floor','mesh'] });
-        return (hits && hits[0]) ? hits[0] : null;
+        // Showcase expects iframe-local client coords
+        const data = await _sdk.Renderer.getWorldPositionData(x, y);
+        // data may be null if background/void; otherwise has {position:{x,y,z}, normal, ...}
+        return (data && data.position) ? data : null;
       } catch (e) {
-        warn("raycast failed:", e);
+        warn("Renderer.getWorldPositionData failed:", e);
         return null;
       }
     }
 
-    function setThreatFromHit(hit){
-      const p = { x: hit.position.x, y: hit.position.z };
+    function setThreatFromWorldData(hit){
+      const p = { x: hit.position.x, y: hit.position.z }; // plan-view XY from x,z
       threat = p;
       info("[threat] meters:", p);
       drawMarkers();
     }
 
-    function addDestinationFromHit(hit, kind){
+    function addDestinationFromWorldData(hit, kind){
       const p = { x: hit.position.x, y: hit.position.z };
       if (kind === "exit") {
         const id = `exit-${exitAutoId++}`;
@@ -439,49 +425,45 @@
       drawMarkers();
     }
 
-    // Glass click handler
+    // Glass click -> Renderer hit
     glass.addEventListener("pointerup", async (e) => {
       if (!(captureToggle.checked || threatArmed)) return;
-
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault(); e.stopPropagation();
 
       const {x, y} = toIframeClientXY(e);
-      const hit = await raycastAtIframeClient(x, y);
+      const hit = await getWorldHitAt(x, y);
       if (!hit) return;
 
       if (captureToggle.checked){
-        addDestinationFromHit(hit, captureKind);
+        addDestinationFromWorldData(hit, captureKind);
         return;
       }
-
-      // threat flow
-      setThreatFromHit(hit);
+      setThreatFromWorldData(hit);
       threatArmed = false;
       updateGlassState();
       await routeSafeAuto();
     });
 
-    // (still support clicks inside the iframe itself when not using the glass)
+    // Also support clicks that happen directly inside the iframe (not through glass)
     async function onViewerClick(evt){
       try{
-        const hits = await _sdk.Pointer.raycast(evt.clientX, evt.clientY, { include: ['floor','mesh'] });
-        if (!hits.length) return;
-        const hit = hits[0];
-        // If user clicked normally (not capture mode), treat as threat set
+        const hit = await getWorldHitAt(evt.clientX, evt.clientY);
+        if (!hit) return;
+
         if (!captureToggle.checked){
-          setThreatFromHit(hit);
+          setThreatFromWorldData(hit);
           await routeSafeAuto();
         } else {
-          addDestinationFromHit(hit, captureKind);
+          addDestinationFromWorldData(hit, captureKind);
         }
-      }catch(e){ /* ignore */ }
+      }catch(e){}
     }
 
     /********* UI wiring *********/
     document.getElementById("btnFullscreen").addEventListener("click", async()=>{
       try{ await (wrap.requestFullscreen?.() || wrap.webkitRequestFullscreen?.()); }catch(_) {}
     });
+
     btnReset.addEventListener("click", ()=>{
       window._lastRoute = null;
       clearCanvas();
@@ -492,6 +474,7 @@
       persistLocal();
       saveDestinationsServerDebounced();
     });
+
     btnRouteTest.addEventListener("click", async ()=>{
       const sx = parseFloat(document.getElementById("sx").value);
       const sy = parseFloat(document.getElementById("sy").value);
@@ -505,7 +488,6 @@
     });
     document.getElementById("btnDownloadDest").addEventListener("click", downloadDestinations);
 
-    // capture kind toggle
     capType.addEventListener("click", (e)=>{
       if (e.target?.dataset?.kind){
         captureKind = e.target.dataset.kind;
@@ -521,22 +503,17 @@
       updateGlassState();
     });
 
-    // Kickoff
     (async function init(){
       setLoading(true);
       resizeCanvas();
 
-      // 1) load Showcase bundle
       mp.src = buildShowcaseUrl();
 
-      // 2) connect SDK after iframe loads
       mp.addEventListener("load", async () => {
         try {
           await connectShowcase(15000);
-          // support clicks directly inside the iframe
           mp.contentWindow.addEventListener("pointerup", onViewerClick);
 
-          // if user double-clicks a sweep, recompute if we already have a threat
           mp.contentWindow.addEventListener("dblclick", async () => {
             try { if (threat) await routeSafeAuto(); } catch (e) { console.warn("dblclick route failed", e); }
           });
@@ -546,13 +523,12 @@
         }
       }, { once:true });
 
-      // 3) pull site bbox + destinations
       await fetchSiteMeta();
       await fetchDestinations();
       if (exits.length === 0 && shelters.length === 0) restoreLocal();
 
       fitFromBBox();
-      updateGlassState(); // init glass state
+      updateGlassState();
       drawMarkers();
       setLoading(false);
     })();
