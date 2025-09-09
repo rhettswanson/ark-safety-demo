@@ -27,18 +27,11 @@
     .btn:hover { background:#243244; }
     .pill { font-size:12px; padding:4px 8px; border-radius:999px; background:#111827; border:1px solid #2a3340; }
 
-    /* capture type toggle */
-    .seg { display:inline-flex; background:#0e1621; border:1px solid #2a3340; border-radius:10px; overflow:hidden }
-    .seg button { all:unset; padding:8px 10px; cursor:pointer; font-weight:700; font-size:12px; }
-    .seg button.active { background:#1f2937; }
-    .seg .exit { color:#10b981; }
-    .seg .shelter { color:#60a5fa; }
-
     #overlay { position:absolute; inset:0; z-index:25; pointer-events:none; }
     #routeLayer { position:absolute; inset:0; pointer-events:none; } /* never steal clicks */
     #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
 
-    /* Transparent capture layer (enabled when Capture Mode OR Threat Place is armed) */
+    /* Transparent capture/placement layer (enabled when Capture Mode or Threat is armed) */
     #captureGlass {
       position:absolute; inset:0; z-index:26;     /* above iframe, below HUD */
       pointer-events:none;                        /* OFF by default; toggled ON in JS */
@@ -72,11 +65,8 @@
           <input id="captureMode" type="checkbox" />
           Capture Mode (click to add Exit/Shelter)
         </label>
-
-        <div class="seg" id="capType">
-          <button class="exit active" data-kind="exit" type="button">Add Exit</button>
-          <button class="shelter" data-kind="shelter" type="button">Add Shelter</button>
-        </div>
+        <button class="btn" id="btnAddExit"    title="While capture mode ON, clicks add exits">Add Exit</button>
+        <button class="btn" id="btnAddShelter" title="While capture mode ON, clicks add shelters">Add Shelter</button>
 
         <button class="btn" id="btnSaveDest">Save to Server</button>
         <button class="btn" id="btnDownloadDest">Download JSON</button>
@@ -109,12 +99,8 @@
     /********* CONFIG *********/
     const MODEL  = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
-    const BUNDLE_PATH = "bundle/dist/showcase.html";
-    const BACKEND_URL = "https://filter-fd-configured-forecast.trycloudflare.com";
-
-    // UI prefs
-    const SHOW_DEST_MARKERS = false; // hide exit/shelter dots
-    const SHOW_BREADCRUMBS  = false; // hide route breadcrumbs
+    const BUNDLE_PATH = "bundle/dist/showcase.html";   // SDK bundle
+    const BACKEND_URL = "https://filter-fd-configured-forecast.trycloudflare.com"; // <-- your current tunnel
 
     /********* LOGGING *********/
     const info  = (...a)=>console.log("[app]", ...a);
@@ -132,62 +118,26 @@
     const btnRouteTest = document.getElementById("btnRouteTest");
     const captureToggle = document.getElementById("captureMode");
     const glass = document.getElementById("captureGlass");
-    const capType = document.getElementById("capType");
     const btnPlaceThreat = document.getElementById("btnPlaceThreat");
+    const btnAddExit = document.getElementById("btnAddExit");
+    const btnAddShelter = document.getElementById("btnAddShelter");
 
-    let SITE_BBOX = null;
-    let SCALE     = {s:1, offx:0, offy:0};
+    let SITE_BBOX = null;                // {min:[x,y], max:[x,y]}
+    let SCALE     = {s:1, offx:0, offy:0}; // meters->pixels
     let _sdk      = null;
 
     let threat = null;                   // {x,y}
     let exits = [];                      // [{id,x,y}]
     let shelters = [];                   // [{id,x,y}]
-    let markers = [];
-    let captureKind = "exit";
+    let captureKind = "exit";            // current type (exit|shelter)
     let exitAutoId = 1, shelterAutoId = 1;
 
+    // armed placement flow for threat
     let threatArmed = false;
 
-    // local persistence
+    // debounced local persistence (optional)
     const LS_KEY = "ark_destinations_v1";
     let saveTimer = null;
-
-    function persistLocal() {
-      try { localStorage.setItem(LS_KEY, JSON.stringify({ exits, shelters })); } catch {}
-    }
-    function restoreLocal() {
-      try {
-        const raw = localStorage.getItem(LS_KEY);
-        if (!raw) return false;
-        const data = JSON.parse(raw);
-        if (Array.isArray(data?.exits)) exits = data.exits;
-        if (Array.isArray(data?.shelters)) shelters = data.shelters;
-        return true;
-      } catch { return false; }
-    }
-    async function saveDestinationsServerDebounced() {
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(async () => {
-        try {
-          const r = await fetch(`${BACKEND_URL}/destinations`, {
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ exits, shelters })
-          });
-          if (!r.ok) throw new Error(await r.text());
-        } catch(e) {
-          console.warn("Server save failed (kept local backup):", e?.message || e);
-        }
-      }, 1000);
-    }
-    function downloadDestinations(){
-      const blob = new Blob([JSON.stringify({exits, shelters}, null, 2)], {type:"application/json"});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = "destinations.json";
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }
 
     function setLoading(on){ loading.style.display = on ? "flex" : "none"; }
 
@@ -195,6 +145,7 @@
       return `${BUNDLE_PATH}?m=${encodeURIComponent(MODEL)}&applicationKey=${encodeURIComponent(APPKEY)}&brand=0&qs=1&play=1&q=18`;
     }
 
+    /** Connect MP SDK once iframe loads */
     async function connectShowcase(timeoutMs = 15000) {
       const t0 = performance.now();
       while (performance.now() - t0 < timeoutMs) {
@@ -207,7 +158,7 @@
             setLoading(false);
             return sdk;
           }
-        } catch(e) {}
+        } catch(e) { /* retry loop */ }
         await new Promise(r=>setTimeout(r, 200));
       }
       throw new Error("Timed out waiting for MP_SDK.connect");
@@ -235,10 +186,10 @@
     }
 
     function worldToCanvas(x, y) {
-      const H = cvs.height;
+      const W = cvs.width, H = cvs.height;
       const {s, offx, offy} = SCALE;
       const px =  x*s + offx;
-      const py =  H - (y*s + offy);
+      const py =  H - (y*s + offy);   // Y-up meters -> Y-down pixels
       return [px, py];
     }
 
@@ -247,16 +198,19 @@
       cvs.height = wrap.clientHeight;
       fitFromBBox();
       if (window._lastRoute) drawRoute(window._lastRoute);
-      drawMarkers();
+      // markers hidden by default (no redraw needed)
     }
     window.addEventListener("resize", resizeCanvas);
 
-    function clearCanvas(){ ctx.clearRect(0,0,cvs.width,cvs.height); }
+    function clearCanvas(){
+      ctx.clearRect(0,0,cvs.width,cvs.height);
+    }
 
     function drawRoute(route){
       clearCanvas();
-      if (!route || route.length < 2) { drawMarkers(); return; }
+      if (!route || route.length < 2) return;
 
+      // polyline
       ctx.lineWidth = 3;
       ctx.strokeStyle = "#00aa66";
       ctx.beginPath();
@@ -266,14 +220,14 @@
       });
       ctx.stroke();
 
-      if (SHOW_BREADCRUMBS){
-        ctx.fillStyle = "#00aa66";
-        for (let i=0;i<route.length;i+=2){
-          const [px,py] = worldToCanvas(route[i][0], route[i][1]);
-          ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill();
-        }
+      // breadcrumbs
+      ctx.fillStyle = "#00aa66";
+      for (let i=0;i<route.length;i+=2){
+        const [px,py] = worldToCanvas(route[i][0], route[i][1]);
+        ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill();
       }
 
+      // endpoints
       const endpoints = [
         {p:route[0], color:"#3b82f6", label:"Start"},
         {p:route[route.length-1], color:"#ef4444", label:"Exit/Shelter"}
@@ -286,27 +240,6 @@
         ctx.fillStyle = "#e5e7eb";
         ctx.fillText(label, px+8, py-8);
       });
-
-      drawMarkers();
-    }
-
-    function drawMarkers(){
-      if (SHOW_DEST_MARKERS){
-        ctx.fillStyle = "#10b981";
-        for (const p of exits) {
-          const [px,py] = worldToCanvas(p.x, p.y);
-          ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fill();
-        }
-        ctx.fillStyle = "#60a5fa";
-        for (const p of shelters) {
-          const [px,py] = worldToCanvas(p.x, p.y);
-          ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fill();
-        }
-      }
-      if (threat) {
-        const [px,py] = worldToCanvas(threat.x, threat.y);
-        ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.fill();
-      }
     }
 
     /********* Backend helpers *********/
@@ -315,12 +248,13 @@
         const r = await fetch(`${BACKEND_URL}/site/meta`);
         if(!r.ok) return;
         const meta = await r.json();
+        info("[meta] units:", meta.units, "bbox_xy:", meta.bbox_xy);
         if (meta && meta.bbox_xy && meta.bbox_xy.min && meta.bbox_xy.max) {
           SITE_BBOX = { min: meta.bbox_xy.min, max: meta.bbox_xy.max };
-          info("[meta] units:", meta.units, "bbox_xy:", meta.bbox_xy);
         }
-      }catch(_) {}
+      }catch(_) { /* optional */ }
     }
+
     async function fetchDestinations(){
       try{
         const r = await fetch(`${BACKEND_URL}/destinations`);
@@ -330,6 +264,7 @@
         shelters = d.shelters || [];
       }catch(_){}
     }
+
     async function saveDestinations(){
       const r = await fetch(`${BACKEND_URL}/destinations`, {
         method:"POST", headers:{"Content-Type":"application/json"},
@@ -338,8 +273,18 @@
       if (!r.ok) throw new Error(await r.text());
     }
 
+    function downloadDestinations(){
+      const blob = new Blob([JSON.stringify({exits, shelters}, null, 2)], {type:"application/json"});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = "destinations.json";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
     async function routeSafeAuto(){
       if (!threat) { alert("Place a threat pin first."); return; }
+      // Start from camera (x,z -> x,y)
       let cam = {x:0,y:0};
       try {
         const pos = await _sdk.Camera.getPosition();
@@ -380,129 +325,175 @@
       }
     }
 
-    /********* Renderer-based hit testing *********/
+    async function routeManualTest(){
+      const sx = parseFloat(document.getElementById("sx").value);
+      const sy = parseFloat(document.getElementById("sy").value);
+      const gx = sx + 10.0, gy = sy + 5.0;
+      setLoading(true);
+      try{
+        const res = await fetch(`${BACKEND_URL}/route`, {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ start:{x:sx,y:sy}, goal:{x:gx,y:gy} })
+        });
+        if(!res.ok){
+          const txt = await res.text();
+          throw new Error(`Route error ${res.status}: ${txt}`);
+        }
+        const out = await res.json();
+        if (!SITE_BBOX && out.route?.length >= 2) {
+          const xs = out.route.map(p=>p[0]); const ys = out.route.map(p=>p[1]);
+          SITE_BBOX = { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
+          fitFromBBox();
+        }
+        window._lastRoute = out.route;
+        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m (manual test)`;
+        drawRoute(out.route);
+      }catch(e){ alert(e.message || e); }finally{ setLoading(false); }
+    }
+
+    /********* Hit-testing helpers (FIXED) *********/
+    // Use Renderer.getWorldPositionData with a Vector2 {x,y}
+    async function getWorldHitAtClientXY(clientX, clientY){
+      if (!_sdk) return null;
+      const rect = mp.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      try {
+        const data = await _sdk.Renderer.getWorldPositionData({ x, y });  // <-- FIX: pass Vector2
+        return data;
+      } catch(e){
+        warn("Renderer.getWorldPositionData failed:", e);
+        return null;
+      }
+    }
+
+    /********* Viewer interactions *********/
+    function clearOverlay(){
+      window._lastRoute = null;
+      clearCanvas();
+      threat = null;
+      stats.textContent = "Length: —";
+    }
+
     function updateGlassState(){
       const on = captureToggle.checked || threatArmed;
       glass.style.pointerEvents = on ? "auto" : "none";
       glass.style.cursor = on ? "crosshair" : "default";
     }
 
-    function toIframeClientXY(ev){
-      const rect = mp.getBoundingClientRect();
-      return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
-    }
-
-    async function getWorldHitAt(x, y){
-      try {
-        // Showcase expects iframe-local client coords
-        const data = await _sdk.Renderer.getWorldPositionData(x, y);
-        // data may be null if background/void; otherwise has {position:{x,y,z}, normal, ...}
-        return (data && data.position) ? data : null;
-      } catch (e) {
-        warn("Renderer.getWorldPositionData failed:", e);
-        return null;
-      }
-    }
-
-    function setThreatFromWorldData(hit){
-      const p = { x: hit.position.x, y: hit.position.z }; // plan-view XY from x,z
-      threat = p;
-      info("[threat] meters:", p);
-      drawMarkers();
-    }
-
-    function addDestinationFromWorldData(hit, kind){
-      const p = { x: hit.position.x, y: hit.position.z };
-      if (kind === "exit") {
-        const id = `exit-${exitAutoId++}`;
-        exits.push({ id, x:p.x, y:p.y });
-      } else {
-        const id = `shelter-${shelterAutoId++}`;
-        shelters.push({ id, x:p.x, y:p.y });
-      }
-      persistLocal();
-      saveDestinationsServerDebounced();
-      drawMarkers();
-    }
-
-    // Glass click -> Renderer hit
+    // Intercept clicks on the glass and act locally (no forwarding)
     glass.addEventListener("pointerup", async (e) => {
       if (!(captureToggle.checked || threatArmed)) return;
-      e.preventDefault(); e.stopPropagation();
 
-      const {x, y} = toIframeClientXY(e);
-      const hit = await getWorldHitAt(x, y);
-      if (!hit) return;
+      e.preventDefault();
+      e.stopPropagation();
 
-      if (captureToggle.checked){
-        addDestinationFromWorldData(hit, captureKind);
+      const hit = await getWorldHitAtClientXY(e.clientX, e.clientY);
+      if (!hit || !hit.position) return;
+
+      // Matterport world: plan = (x,z)
+      const p = { x: hit.position.x, y: hit.position.z };
+
+      if (captureToggle.checked) {
+        if (captureKind === "exit") {
+          const id = `exit-${exitAutoId++}`;
+          exits.push({ id, x: p.x, y: p.y });
+        } else {
+          const id = `shelter-${shelterAutoId++}`;
+          shelters.push({ id, x: p.x, y: p.y });
+        }
+        // Persist silently; markers are hidden to avoid clutter
+        persistLocal();
+        saveDestinationsServerDebounced();
         return;
       }
-      setThreatFromWorldData(hit);
+
+      // Threat placement
+      threat = p;
+      info("[threat] meters:", threat);
       threatArmed = false;
       updateGlassState();
       await routeSafeAuto();
     });
 
-    // Also support clicks that happen directly inside the iframe (not through glass)
+    // Also allow clicking directly inside the iframe (for inside mode)
     async function onViewerClick(evt){
       try{
-        const hit = await getWorldHitAt(evt.clientX, evt.clientY);
-        if (!hit) return;
+        const hit = await getWorldHitAtClientXY(evt.clientX, evt.clientY);
+        if (!hit || !hit.position) return;
+        const p = { x: hit.position.x, y: hit.position.z };
 
-        if (!captureToggle.checked){
-          setThreatFromWorldData(hit);
-          await routeSafeAuto();
-        } else {
-          addDestinationFromWorldData(hit, captureKind);
+        if (captureToggle.checked) {
+          if (captureKind === "exit") {
+            const id = `exit-${exitAutoId++}`;
+            exits.push({ id, x: p.x, y: p.y });
+          } else {
+            const id = `shelter-${shelterAutoId++}`;
+            shelters.push({ id, x: p.x, y: p.y });
+          }
+          persistLocal();
+          saveDestinationsServerDebounced();
+          return;
         }
-      }catch(e){}
+
+        // Normal click: set threat and route
+        threat = p;
+        info("[threat] meters:", threat);
+        await routeSafeAuto();
+      }catch(e){ /* ignore */ }
+    }
+
+    /* ===== Persistence helpers ===== */
+    function persistLocal() {
+      try { localStorage.setItem(LS_KEY, JSON.stringify({ exits, shelters })); } catch {}
+    }
+    function restoreLocal() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return false;
+        const data = JSON.parse(raw);
+        if (Array.isArray(data?.exits)) exits = data.exits;
+        if (Array.isArray(data?.shelters)) shelters = data.shelters;
+        return true;
+      } catch { return false; }
+    }
+    async function saveDestinationsServerDebounced() {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        try {
+          const r = await fetch(`${BACKEND_URL}/destinations`, {
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ exits, shelters })
+          });
+          if (!r.ok) throw new Error(await r.text());
+        } catch(e) {
+          console.warn("Server save failed (kept local backup):", e?.message || e);
+        }
+      }, 800);
     }
 
     /********* UI wiring *********/
     document.getElementById("btnFullscreen").addEventListener("click", async()=>{
       try{ await (wrap.requestFullscreen?.() || wrap.webkitRequestFullscreen?.()); }catch(_) {}
     });
-
-    btnReset.addEventListener("click", ()=>{
-      window._lastRoute = null;
-      clearCanvas();
-      markers = [];
-      threat = null;
-      stats.textContent = "Length: —";
-      drawMarkers();
-      persistLocal();
-      saveDestinationsServerDebounced();
-    });
-
-    btnRouteTest.addEventListener("click", async ()=>{
-      const sx = parseFloat(document.getElementById("sx").value);
-      const sy = parseFloat(document.getElementById("sy").value);
-      threat = {x:sx+10,y:sy+5};
-      drawMarkers();
-      await routeSafeAuto();
-    });
-
+    btnReset.addEventListener("click", clearOverlay);
+    btnRouteTest.addEventListener("click", routeManualTest);
     document.getElementById("btnSaveDest").addEventListener("click", async ()=>{
       try{ await saveDestinations(); alert("Saved exits/shelters to server."); }catch(e){ alert(e.message||e); }
     });
     document.getElementById("btnDownloadDest").addEventListener("click", downloadDestinations);
 
-    capType.addEventListener("click", (e)=>{
-      if (e.target?.dataset?.kind){
-        captureKind = e.target.dataset.kind;
-        for (const b of capType.querySelectorAll("button")) b.classList.remove("active");
-        e.target.classList.add("active");
-      }
-    });
-
-    captureToggle.addEventListener("change", updateGlassState);
-
     btnPlaceThreat.addEventListener("click", ()=>{
       threatArmed = true;
       updateGlassState();
     });
+    captureToggle.addEventListener("change", ()=> updateGlassState());
+    btnAddExit.addEventListener("click", ()=> { captureToggle.checked = true; captureKind = "exit"; updateGlassState(); });
+    btnAddShelter.addEventListener("click", ()=> { captureToggle.checked = true; captureKind = "shelter"; updateGlassState(); });
 
+    // Kickoff
     (async function init(){
       setLoading(true);
       resizeCanvas();
@@ -512,10 +503,11 @@
       mp.addEventListener("load", async () => {
         try {
           await connectShowcase(15000);
+          // clicks inside iframe too (Inside mode)
           mp.contentWindow.addEventListener("pointerup", onViewerClick);
-
+          // re-route on dblclick enter sweep if threat already set
           mp.contentWindow.addEventListener("dblclick", async () => {
-            try { if (threat) await routeSafeAuto(); } catch (e) { console.warn("dblclick route failed", e); }
+            try { if (threat) await routeSafeAuto(); } catch {}
           });
         } catch (e) {
           error(e);
@@ -529,10 +521,8 @@
 
       fitFromBBox();
       updateGlassState();
-      drawMarkers();
       setLoading(false);
     })();
   </script>
 </body>
 </html>
-<!-- touch 2025-09-09T14:47:34 -->
