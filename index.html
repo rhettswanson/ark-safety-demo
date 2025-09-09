@@ -27,6 +27,13 @@
     .btn:hover { background:#243244; }
     .pill { font-size:12px; padding:4px 8px; border-radius:999px; background:#111827; border:1px solid #2a3340; }
 
+    /* capture type toggle */
+    .seg { display:inline-flex; background:#0e1621; border:1px solid #2a3340; border-radius:10px; overflow:hidden }
+    .seg button { all:unset; padding:8px 10px; cursor:pointer; font-weight:700; font-size:12px; }
+    .seg button.active { background:#1f2937; }
+    .seg .exit { color:#10b981; }
+    .seg .shelter { color:#60a5fa; }
+
     #overlay { position:absolute; inset:0; z-index:25; pointer-events:none; }
     #routeLayer { position:absolute; inset:0; pointer-events:none; } /* never steal clicks */
     #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
@@ -61,8 +68,15 @@
       <div class="group" style="gap:16px; border-left:1px solid #2a2a2a; padding-left:12px;">
         <label class="pill" style="display:flex;gap:8px;align-items:center">
           <input id="captureMode" type="checkbox" />
-          Capture Mode (Shift+Click exits/shelters)
+          Capture Mode (click to add points)
         </label>
+
+        <!-- NEW: capture type toggle -->
+        <div class="seg" id="capType">
+          <button class="exit active" data-kind="exit" type="button">Add Exit</button>
+          <button class="shelter" data-kind="shelter" type="button">Add Shelter</button>
+        </div>
+
         <button class="btn" id="btnSaveDest">Save to Server</button>
         <button class="btn" id="btnDownloadDest">Download JSON</button>
       </div>
@@ -72,6 +86,8 @@
           <label>Start X (m)</label>
           <input id="sx" type="number" step="0.1" value="0">
         </div>
+      </div>
+      <div class="group">
         <div class="field">
           <label>Start Y (m)</label>
           <input id="sy" type="number" step="0.1" value="0">
@@ -113,6 +129,7 @@
     const btnRouteTest = document.getElementById("btnRouteTest");
     const captureToggle = document.getElementById("captureMode");
     const glass = document.getElementById("captureGlass");
+    const capType = document.getElementById("capType");
 
     let SITE_BBOX = null;                // {min:[x,y], max:[x,y]}
     let SCALE     = {s:1, offx:0, offy:0}; // meters->pixels
@@ -122,6 +139,8 @@
     let exits = [];                      // [{id,x,y}]
     let shelters = [];                   // [{id,x,y}]
     let markers = [];                    // drawn capture points
+    let captureKind = "exit";            // NEW: current type (exit|shelter)
+    let exitAutoId = 1, shelterAutoId = 1;
 
     function setLoading(on){ loading.style.display = on ? "flex" : "none"; }
 
@@ -182,6 +201,7 @@
       cvs.height = wrap.clientHeight;
       fitFromBBox();
       if (window._lastRoute) drawRoute(window._lastRoute);
+      drawMarkers(); // keep markers visible on resize
     }
     window.addEventListener("resize", resizeCanvas);
 
@@ -191,7 +211,7 @@
 
     function drawRoute(route){
       clearCanvas();
-      if (!route || route.length < 2) return;
+      if (!route || route.length < 2) { drawMarkers(); return; }
 
       // polyline
       ctx.lineWidth = 3;
@@ -223,6 +243,23 @@
         ctx.fillStyle = "#e5e7eb";
         ctx.fillText(label, px+8, py-8);
       });
+
+      drawMarkers();
+    }
+
+    function drawMarkers(){
+      // exits (green)
+      ctx.fillStyle = "#10b981";
+      for (const p of exits) {
+        const [px,py] = worldToCanvas(p.x, p.y);
+        ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fill();
+      }
+      // shelters (blue)
+      ctx.fillStyle = "#60a5fa";
+      for (const p of shelters) {
+        const [px,py] = worldToCanvas(p.x, p.y);
+        ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fill();
+      }
     }
 
     /********* Backend helpers *********/
@@ -342,23 +379,29 @@
       markers = [];
       threat = null;
       stats.textContent = "Length: —";
+      drawMarkers();
     }
 
     async function onViewerClick(evt){
-      console.log("[iframe onViewerClick] evt", { x: evt.clientX, y: evt.clientY, shift: evt.shiftKey });
+      console.log("[iframe onViewerClick] evt", { x: evt.clientX, y: evt.clientY });
       try{
         const hits = await _sdk.Pointer.raycast(evt.clientX, evt.clientY, { include: ['floor'] });
         if (!hits.length) return;
         const hit = hits[0];
         const p = { x: hit.position.x, y: hit.position.z }; // (x,z)->(x,y)
 
-        if (captureToggle.checked && evt.shiftKey) {
-          const label = prompt('Label as "exit:<name>" or "shelter:<name>"', 'exit:front');
-          if (!label) return;
-          const [kind, id] = label.split(':');
-          const rec = { id: (id||`pt-${Date.now()}`), x:p.x, y:p.y };
-          if (kind === 'exit') exits.push(rec); else shelters.push(rec);
-          drawCaptureMarker(p, kind === 'exit' ? "#10b981" : "#60a5fa");
+        if (captureToggle.checked) {
+          // auto-assign based on toggle (no prompt)
+          if (captureKind === "exit") {
+            const id = `exit-${exitAutoId++}`;
+            exits.push({ id, x: p.x, y: p.y });
+            drawCaptureMarker(p, "#10b981");
+          } else {
+            const id = `shelter-${shelterAutoId++}`;
+            shelters.push({ id, x: p.x, y: p.y });
+            drawCaptureMarker(p, "#60a5fa");
+          }
+          drawMarkers();
           return;
         }
 
@@ -380,16 +423,25 @@
       markers.push({p,color});
     }
 
-    /* ===== Capture glass controls ===== */
+    /* ===== Capture UI ===== */
     function setCaptureActive(on){
       glass.style.pointerEvents = on ? "auto" : "none";
       glass.style.cursor = on ? "crosshair" : "default";
     }
     captureToggle.addEventListener("change", (e)=> setCaptureActive(e.target.checked));
 
-    // Intercept Shift+Click and forward a real PointerEvent to the iframe (window & document)
+    // Toggle buttons
+    capType.addEventListener("click", (e)=>{
+      const btn = e.target.closest("button[data-kind]");
+      if (!btn) return;
+      captureKind = btn.dataset.kind; // "exit" | "shelter"
+      for (const b of capType.querySelectorAll("button")) b.classList.remove("active");
+      btn.classList.add("active");
+    });
+
+    // Intercept clicks and forward to iframe (no Shift needed now)
     glass.addEventListener("pointerup", (e) => {
-      if (!captureToggle.checked || !e.shiftKey) return;
+      if (!captureToggle.checked) return;
 
       e.preventDefault();
       e.stopPropagation();
@@ -397,14 +449,13 @@
       const rect = mp.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      console.log("[captureGlass] intercept", { x, y });
+      console.log("[captureGlass] intercept", { x, y, captureKind });
 
       try {
         const PE = mp.contentWindow.PointerEvent || mp.contentWindow.MouseEvent;
         const payload = {
           clientX: x,
           clientY: y,
-          shiftKey: true,
           bubbles: true,
           cancelable: true,
           view: mp.contentWindow,
@@ -418,10 +469,8 @@
 
         const win = mp.contentWindow;
         const doc = win.document;
-        const ok1 = win.dispatchEvent(evt1);
-        const ok2 = doc.dispatchEvent(evt2);
-
-        console.log("[captureGlass] forwarded pointerup → iframe", { ok1, ok2, x, y });
+        win.dispatchEvent(evt1);
+        doc.dispatchEvent(evt2);
       } catch (err) {
         console.warn("captureGlass forward failed:", err);
       }
