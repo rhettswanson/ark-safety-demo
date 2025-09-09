@@ -66,7 +66,7 @@
       </div>
 
       <div class="group" style="gap:16px; border-left:1px solid #2a2a2a; padding-left:12px;">
-        <!-- NEW: “Place Threat” arms one-click placement in any mode -->
+        <!-- “Place Threat” arms one-click placement in any mode -->
         <button class="btn" id="btnPlaceThreat" title="Arm a single click to drop a red threat pin in any viewer mode">Place Threat</button>
 
         <label class="pill" style="display:flex;gap:8px;align-items:center">
@@ -146,8 +146,10 @@
 
     // “armed” placement flow for threat
     let threatArmed = false;
+    // you said this is already in; keeping here for clarity
+    let pendingRoute = false;
 
-    // ===== Persistence helpers (optional; kept from your previous version) =====
+    // ===== Persistence helpers =====
     const LS_KEY = "ark_destinations_v1";
     let saveTimer = null;
 
@@ -425,10 +427,9 @@
       saveDestinationsServerDebounced();
     }
 
-    // Main click handler inside iframe: either capture Exit/Shelter or place Threat + route
+    // Main click handler inside iframe: either capture Exit/Shelter or place Threat (+ route if not pending)
     async function onViewerClick(evt){
       try{
-        // broader include helps in Floor Plan/Dollhouse
         const hits = await _sdk.Pointer.raycast(evt.clientX, evt.clientY, { include: ['floor', 'mesh'] });
         if (!hits.length) return;
         const hit = hits[0];
@@ -450,17 +451,18 @@
           return;
         }
 
-        // Threat placement flow
+        // Threat placement flow (from inside view clicks)
         threat = p;
-        drawMarkers(); // draws the red threat as well
+        drawMarkers();
 
-        // If this was an armed placement, disarm so navigation works again
         if (threatArmed) {
           threatArmed = false;
           updateGlassState();
         }
 
-        await routeSafeAuto();
+        // If you clicked inside while already in the space and want immediate routing,
+        // keep pendingRoute logic: only route immediately if not pending
+        if (!pendingRoute) await routeSafeAuto();
       }catch(e){ /* ignore */ }
     }
 
@@ -470,12 +472,30 @@
       markers.push({p,color});
     }
 
+    /* === NEW: direct-placement helper for threat from the glass layer === */
+    async function placeThreatAtClientXY(x, y){
+      try{
+        const hits = await _sdk.Pointer.raycast(x, y, { include: ['floor','mesh'] });
+        if (!hits.length) {
+          console.warn("[placeThreat] no hit at", x, y);
+          return false;
+        }
+        const hit = hits[0];
+        threat = { x: hit.position.x, y: hit.position.z }; // (x,z)->(x,y)
+        drawMarkers();            // draws the red threat
+        // Defer routing until you enter
+        pendingRoute = true;
+        return true;
+      }catch(e){
+        console.warn("[placeThreat] raycast failed:", e);
+        return false;
+      }
+    }
+
     /* ===== Capture / Place Threat UI ===== */
     function updateGlassState(){
-      // Enable glass while Capture Mode is ON, or if threat placement is armed
       const on = captureToggle.checked || threatArmed;
       glass.style.pointerEvents = on ? "auto" : "none";
-      // Cursor reflects current action
       glass.style.cursor = captureToggle.checked ? "crosshair" : (threatArmed ? "crosshair" : "default");
     }
 
@@ -486,39 +506,51 @@
       updateGlassState();
     });
 
-    // Intercept clicks and forward to iframe:
-    // - If Capture Mode ON → add exit/shelter (via onViewerClick)
-    // - If threatArmed → place threat (via onViewerClick)
-    glass.addEventListener("pointerup", (e) => {
-      if (!(captureToggle.checked || threatArmed)) return;
+    // Intercept clicks ON the glass and handle directly (raycast + action)
+    glass.addEventListener("pointerup", async (e) => {
+      const wantsCapture = captureToggle.checked;
+      const wantsThreat  = threatArmed;
+
+      if (!wantsCapture && !wantsThreat) return;
 
       e.preventDefault();
       e.stopPropagation();
 
+      // Convert to iframe-local coords
       const rect = mp.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
-      try {
-        const PE = mp.contentWindow.PointerEvent || mp.contentWindow.MouseEvent;
-        const payload = {
-          clientX: x,
-          clientY: y,
-          bubbles: true,
-          cancelable: true,
-          view: mp.contentWindow,
-          pointerId: 1,
-          isPrimary: true,
-          buttons: 0,
-          button: 0
-        };
-        // Dispatch to both window + document to be safe
-        const win = mp.contentWindow;
-        const doc = win.document;
-        win.dispatchEvent(new PE("pointerup", payload));
-        doc.dispatchEvent(new PE("pointerup", payload));
-      } catch (err) {
-        console.warn("captureGlass forward failed:", err);
+      if (wantsCapture) {
+        try{
+          const hits = await _sdk.Pointer.raycast(x, y, { include: ['floor','mesh'] });
+          if (!hits.length) return;
+          const p = { x: hits[0].position.x, y: hits[0].position.z };
+
+          if (captureKind === "exit") {
+            const id = `exit-${(window.exitAutoId = (window.exitAutoId||1))++}`;
+            exits.push({ id, x: p.x, y: p.y });
+            drawCaptureMarker(p, "#10b981");
+          } else {
+            const id = `shelter-${(window.shelterAutoId = (window.shelterAutoId||1))++}`;
+            shelters.push({ id, x: p.x, y: p.y });
+            drawCaptureMarker(p, "#60a5fa");
+          }
+          drawMarkers();
+          persistLocal();
+          saveDestinationsServerDebounced();
+        }catch(err){
+          console.warn("capture raycast failed:", err);
+        }
+        return;
+      }
+
+      if (wantsThreat) {
+        const ok = await placeThreatAtClientXY(x, y);
+        // Always disarm so normal navigation resumes
+        threatArmed = false;
+        updateGlassState();
+        if (!ok) console.warn("No valid hit for threat placement.");
       }
     });
 
@@ -545,12 +577,19 @@
       mp.addEventListener("load", async () => {
         try {
           await connectShowcase(15000);
-          // clicks inside iframe
+          // clicks inside iframe (still used when glass is off)
           mp.contentWindow.addEventListener("pointerup", onViewerClick);
 
-          // NEW: when user double-clicks to enter a sweep, compute route if a threat exists
+          // On dblclick to enter a sweep, compute route if a threat was placed outside
           mp.contentWindow.addEventListener("dblclick", async () => {
-            try { if (threat) await routeSafeAuto(); } catch (e) { console.warn("dblclick route failed", e); }
+            try {
+              if (threat && pendingRoute) {
+                await routeSafeAuto();
+                pendingRoute = false;
+              }
+            } catch (e) {
+              console.warn("dblclick route failed", e);
+            }
           });
         } catch (e) {
           error(e);
