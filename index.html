@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>Ark Active Threat – Phase 1.1 (SDK)</title>
+  <title>Ark Active Threat – Phase 1.2 (SDK)</title>
   <style>
     :root { color-scheme: light dark; }
     html, body { height: 100%; margin: 0; }
@@ -50,13 +50,19 @@
 
     <div id="hud" role="toolbar" aria-label="Controls">
       <div class="group">
-        <span class="pill">Phase 1.1</span>
+        <span class="pill">Phase 1.2</span>
         <button class="btn" id="btnFullscreen">Fullscreen</button>
         <button class="btn" id="btnReset">Reset</button>
       </div>
 
       <div class="group" style="gap:16px; border-left:1px solid #2a2a2a; padding-left:12px;">
         <button class="btn" id="btnPlaceThreat">Place Threat</button>
+<div class="field"><label>Mode</label>
+<select id="modeSelect" class="btn" style="padding:6px 10px; background:#0f172a;">
+<option value="auto" selected>Auto (Recommended)</option>
+<option value="evac">Force Evac</option>
+<option value="shelter">Force Shelter</option>
+</select></div>
 
         <label class="pill" style="display:flex;gap:8px;align-items:center">
           <input id="captureMode" type="checkbox" />
@@ -87,7 +93,7 @@
 
     <div id="overlay">
       <canvas id="routeLayer"></canvas>
-      <div id="legend">World-anchored overlay (scaled to navgraph XY)</div>
+      
     </div>
 
     <div id="loading"><div class="spinner" aria-label="Loading"></div></div>
@@ -153,7 +159,14 @@
             window._mpSdk = _sdk = sdk;
             info("SDK connected");
             setLoading(false);
+            try { _sdk.Camera.pose.subscribe(()=>{ if (window._lastRoute) drawRoute(window._lastRoute); }); } catch(_) {}
             return sdk;
+            
+      // Redraw route when camera pose changes to keep overlay aligned (no drift)
+      _sdk.Camera.pose.subscribe(()=>{
+        if (window._lastRoute) drawRoute(window._lastRoute);
+      });
+
           }
         } catch(e) {}
         await new Promise(r=>setTimeout(r, 200));
