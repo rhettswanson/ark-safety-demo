@@ -27,7 +27,6 @@
     .btn:hover { background:#243244; }
     .pill { font-size:12px; padding:4px 8px; border-radius:999px; background:#111827; border:1px solid #2a3340; }
 
-    /* capture type toggle */
     .seg { display:inline-flex; background:#0e1621; border:1px solid #2a3340; border-radius:10px; overflow:hidden }
     .seg button { all:unset; padding:8px 10px; cursor:pointer; font-weight:700; font-size:12px; }
     .seg button.active { background:#1f2937; }
@@ -38,12 +37,7 @@
     #routeLayer { position:absolute; inset:0; pointer-events:none; }
     #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
 
-    /* Transparent capture layer (enabled when Capture Mode OR Threat Place is armed) */
-    #captureGlass {
-      position:absolute; inset:0; z-index:26;
-      pointer-events:none;  /* toggled ON in JS */
-      cursor: default;
-    }
+    #captureGlass { position:absolute; inset:0; z-index:26; pointer-events:none; cursor: default; }
 
     #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:40;
       background: radial-gradient(ellipse at center, rgba(0,0,0,.65) 0%, rgba(0,0,0,.85) 65%); }
@@ -55,7 +49,6 @@
   <div id="wrap">
     <iframe id="mp" allow="fullscreen; xr-spatial-tracking" allowfullscreen src=""></iframe>
 
-    <!-- shared capture/placement layer -->
     <div id="captureGlass" aria-hidden="true"></div>
 
     <div id="hud" role="toolbar" aria-label="Controls">
@@ -132,7 +125,6 @@
     const btnPlaceThreat = document.getElementById("btnPlaceThreat");
 
     let SITE_BBOX = null;                // {min:[x,y], max:[x,y]}
-    let SCALE     = {s:1, offx:0, offy:0}; // legacy fallback meters->pixels
     let _sdk      = null;
 
     let threat = null;                   // {x,y}
@@ -146,6 +138,9 @@
 
     // dynamic homography (world XY -> screen px)
     let H = null;                        // {m:[9 numbers], rect:DOMRect} or null
+
+    // renderer readiness
+    let _rendererReady = false;
 
     /* ===== Local persistence ===== */
     const LS_KEY = "ark_destinations_v1";
@@ -213,47 +208,37 @@
       throw new Error("Timed out waiting for MP_SDK.connect");
     }
 
-    /********* FIT + DRAW (fallback 2D) *********/
-    function fitFromBBox() {
-      const W = cvs.width, H = cvs.height;
-      if (!SITE_BBOX) { SCALE = {s:1, offx:0, offy:0}; return; }
-      const [minx, miny] = SITE_BBOX.min;
-      const [maxx, maxy] = SITE_BBOX.max;
-      const pad = 30;
-
-      const rw = Math.max(1e-6, maxx - minx);
-      const rh = Math.max(1e-6, maxy - miny);
-
-      const sx = (W - 2*pad) / rw;
-      const sy = (H - 2*pad) / rh;
-      const s  = Math.min(sx, sy);
-
-      const offx = pad - minx*s + (W - 2*pad - rw*s)/2;
-      const offy = pad - miny*s + (H - 2*pad - rh*s)/2;
-
-      SCALE = {s, offx, offy};
+    /********* Renderer readiness *********/
+    async function ensureRendererReady(timeoutMs = 5000) {
+      if (_rendererReady) return true;
+      const t0 = performance.now();
+      while (performance.now() - t0 < timeoutMs) {
+        try {
+          const rect = mp.getBoundingClientRect();
+          const dpr  = mp.contentWindow?.devicePixelRatio || 1;
+          const probe = await _sdk.Renderer.getWorldPositionData(
+            { x: (rect.width * 0.5) * dpr, y: (rect.height * 0.5) * dpr },
+            undefined,
+            true
+          );
+          if (probe?.position) { _rendererReady = true; return true; }
+        } catch (e) {
+          const msg = String(e?.message || e);
+          if (msg.includes("not ready")) {
+            await new Promise(r => setTimeout(r, 120));
+            continue;
+          }
+          throw e;
+        }
+      }
+      throw new Error("Renderer did not become ready in time");
     }
-    function worldToCanvasFallback(x, y) {
-      const W = cvs.width, H = cvs.height;
-      const {s, offx, offy} = SCALE;
-      const px =  x*s + offx;
-      const py =  H - (y*s + offy);
-      return [px, py];
-    }
-
-    function resizeCanvas(){
-      cvs.width  = wrap.clientWidth;
-      cvs.height = wrap.clientHeight;
-    }
-    window.addEventListener("resize", resizeCanvas);
 
     /********* Homography utils *********/
     function solve8x8(A,b){
-      // simple Gauss-Jordan
       const n=8;
       for(let i=0;i<n;i++){ A[i]=A[i].slice(); A[i].push(b[i]); }
       for(let c=0;c<n;c++){
-        // pivot
         let p=c; for(let r=c+1;r<n;r++) if (Math.abs(A[r][c])>Math.abs(A[p][c])) p=r;
         if (Math.abs(A[p][c])<1e-9) return null;
         [A[c],A[p]]=[A[p],A[c]];
@@ -268,8 +253,6 @@
       return A.map(row=>row[n]);
     }
     function homographyFrom4(world, screen){
-      // world: [{x,y},...4], screen: [{u,v},...4]
-      // unknowns h11..h13,h21..h23,h31,h32 ; h33 = 1
       const A=[], b=[];
       for(let i=0;i<4;i++){
         const {x,y}=world[i]; const {u,v}=screen[i];
@@ -279,8 +262,7 @@
       const h = solve8x8(A,b);
       if(!h) return null;
       const [h11,h12,h13,h21,h22,h23,h31,h32]=h;
-      const H=[h11,h12,h13,h21,h22,h23,h31,h32,1];
-      return H;
+      return [h11,h12,h13,h21,h22,h23,h31,h32,1];
     }
     function proj(H, x, y){
       const [h11,h12,h13,h21,h22,h23,h31,h32,h33]=H;
@@ -292,6 +274,8 @@
 
     async function calibrateHomography(){
       if(!_sdk) return null;
+      await ensureRendererReady();
+
       const rect = mp.getBoundingClientRect();
       const W = Math.max(2, Math.floor(rect.width));
       const Hh= Math.max(2, Math.floor(rect.height));
@@ -316,11 +300,9 @@
     }
 
     function drawProjectedPoints(points, color, radius=3){
-      if(!H){ // fallback
-        points.forEach(p=>{
-          const [px,py]=worldToCanvasFallback(p.x,p.y);
-          ctx.beginPath(); ctx.arc(px,py,radius,0,Math.PI*2); ctx.fillStyle=color; ctx.fill();
-        });
+      ctx.fillStyle=color;
+      if(!H){
+        // Fallback: skip (or you could draw nothing)
         return;
       }
       const {m,rect}=H;
@@ -328,22 +310,17 @@
         const [u,v]=proj(m, p.x, p.y);
         const px = rect.left + u;
         const py = rect.top  + v;
-        ctx.beginPath(); ctx.arc(px,py,radius,0,Math.PI*2); ctx.fillStyle=color; ctx.fill();
+        ctx.beginPath(); ctx.arc(px,py,radius,0,Math.PI*2); ctx.fill();
       });
     }
 
     function drawProjectedRoute(route){
       ctx.clearRect(0,0,cvs.width,cvs.height);
-      if(!route || route.length<2){ // just markers
-        drawProjectedPoints(exits, "#10b981", 5);
-        drawProjectedPoints(shelters, "#60a5fa", 5);
-        if(threat) drawProjectedPoints([threat], "#ef4444", 6);
-        return;
-      }
-      ctx.lineWidth=3; ctx.strokeStyle="#00aa66"; ctx.beginPath();
+      if(!H){ return; }
 
-      if(H){
+      if(route && route.length>=2){
         const {m,rect}=H;
+        ctx.lineWidth=3; ctx.strokeStyle="#00aa66"; ctx.beginPath();
         route.forEach((p,i)=>{
           const [u,v]=proj(m,p[0],p[1]);
           const x=rect.left+u, y=rect.top+v;
@@ -351,37 +328,19 @@
         });
         ctx.stroke();
 
-        // breadcrumbs
         ctx.fillStyle="#00aa66";
         for(let i=0;i<route.length;i+=2){
           const [u,v]=proj(m,route[i][0],route[i][1]);
           ctx.beginPath(); ctx.arc(rect.left+u, rect.top+v, 3,0,Math.PI*2); ctx.fill();
         }
-      }else{
-        // fallback
-        route.forEach((p,i)=>{
-          const [x,y]=worldToCanvasFallback(p[0],p[1]);
-          if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-        });
-        ctx.stroke();
-        ctx.fillStyle="#00aa66";
-        for(let i=0;i<route.length;i+=2){
-          const [x,y]=worldToCanvasFallback(route[i][0],route[i][1]);
-          ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill();
-        }
-      }
 
-      // endpoints
-      const endpoints=[ {p:route[0], color:"#3b82f6"}, {p:route[route.length-1], color:"#ef4444"} ];
-      endpoints.forEach(({p,color})=>{
-        if(H){
+        // endpoints
+        const endpoints=[ {p:route[0], color:"#3b82f6"}, {p:route[route.length-1], color:"#ef4444"} ];
+        endpoints.forEach(({p,color})=>{
           const [u,v]=proj(H.m,p[0],p[1]);
           ctx.fillStyle=color; ctx.beginPath(); ctx.arc(H.rect.left+u,H.rect.top+v,6,0,Math.PI*2); ctx.fill();
-        }else{
-          const [x,y]=worldToCanvasFallback(p[0],p[1]);
-          ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.fill();
-        }
-      });
+        });
+      }
 
       // markers last
       drawProjectedPoints(exits, "#10b981", 5);
@@ -450,12 +409,6 @@
         }
         const out = await res.json();
 
-        if (!SITE_BBOX && out.route?.length >= 2) {
-          const xs = out.route.map(p=>p[0]);
-          const ys = out.route.map(p=>p[1]);
-          SITE_BBOX = { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
-        }
-
         window._lastRoute = out.route;
         stats.textContent = `Length: ${out.length_m?.toFixed(1)} m · ${out.decision?.toUpperCase?.()||"—"} → ${out.target_kind||"—"} (${out.target_id||"—"})`;
       }catch(e){
@@ -467,11 +420,28 @@
 
     /********* Glass-only input *********/
     async function screenToWorldXY(x, y) {
-      // Use iframe DPR to avoid offset
+      await ensureRendererReady();
+
       const dpr = mp.contentWindow?.devicePixelRatio || 1;
-      const data = await _sdk.Renderer.getWorldPositionData({ x: x*dpr, y: y*dpr }, undefined, true);
-      const pos = data?.position;
-      return pos ? { x: pos.x, y: pos.z } : null;
+
+      for (let i = 0; i < 5; i++) {
+        try {
+          const data = await _sdk.Renderer.getWorldPositionData(
+            { x: x * dpr, y: y * dpr },
+            undefined,
+            true
+          );
+          const pos = data?.position;
+          if (pos) return { x: pos.x, y: pos.z };
+        } catch (e) {
+          if (String(e?.message || e).includes("not ready")) {
+            await new Promise(r => setTimeout(r, 100));
+            continue;
+          }
+          throw e;
+        }
+      }
+      return null;
     }
 
     async function placeThreatAtClientXY(x, y){
@@ -546,25 +516,20 @@
 
     /********* Draw loop – keeps overlay anchored *********/
     async function tick(){
-      // Recalibrate homography periodically (cheap, ~4 samples)
-      H = await calibrateHomography();
+      try { H = await calibrateHomography(); } catch {}
       const route = window._lastRoute || null;
 
-      // Fit canvas to window each frame (cheap) so absolute px are correct
       if (cvs.width !== wrap.clientWidth || cvs.height !== wrap.clientHeight) {
         cvs.width = wrap.clientWidth; cvs.height = wrap.clientHeight;
       }
 
-      // Draw markers / route using the current H
       if (route || exits.length || shelters.length || threat) {
         drawProjectedRoute(route);
       } else {
         ctx.clearRect(0,0,cvs.width,cvs.height);
       }
 
-      // if user dblclicks after placing in plan view, compute on enter
-      // (dblclick listener is set during init)
-      setTimeout(tick, 70); // ~14fps is plenty
+      setTimeout(tick, 70);
     }
 
     /********* UI wiring *********/
@@ -573,7 +538,6 @@
     });
     btnReset.addEventListener("click", clearOverlay);
     btnRouteTest.addEventListener("click", async ()=>{ await routeSafeAuto(); });
-
     document.getElementById("btnSaveDest").addEventListener("click", async ()=>{
       try{ await saveDestinations(); alert("Saved exits/shelters to server."); }catch(e){ alert(e.message||e); }
     });
@@ -582,13 +546,13 @@
     // Kickoff
     (async function init(){
       setLoading(true);
-      resizeCanvas();
 
       mp.src = buildShowcaseUrl();
 
       mp.addEventListener("load", async () => {
         try {
           await connectShowcase(15000);
+          await ensureRendererReady();            // <<< NEW: wait for renderer
 
           // After placing threat in plan view, dblclick enter -> route
           mp.contentWindow.addEventListener("dblclick", async () => {
