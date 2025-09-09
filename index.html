@@ -103,7 +103,7 @@
     const MODEL  = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
     const BUNDLE_PATH = "bundle/dist/showcase.html";
-    const BACKEND_URL = "https://diff-adaptation-surgical-duke.trycloudflare.com";
+    const BACKEND_URL = "https://filter-fd-configured-forecast.trycloudflare.com";
 
     /********* LOGGING *********/
     const info  = (...a)=>console.log("[app]", ...a);
@@ -144,6 +144,32 @@
 
     // fallback transform
     let SCALE = { s:1, offx:0, offy:0 };
+
+    // simple local persistence used by older code paths
+    const LS_KEY = "ark_destinations_v1";
+    let _saveTimer = null;
+    function persistLocal(){ try{ localStorage.setItem(LS_KEY, JSON.stringify({exits, shelters})); }catch{} }
+    function restoreLocal(){
+      try{
+        const raw = localStorage.getItem(LS_KEY);
+        if(!raw) return false;
+        const d = JSON.parse(raw);
+        if(Array.isArray(d?.exits)) exits = d.exits;
+        if(Array.isArray(d?.shelters)) shelters = d.shelters;
+        return true;
+      }catch{ return false; }
+    }
+    function saveDestinationsServerDebounced(){
+      if(_saveTimer) clearTimeout(_saveTimer);
+      _saveTimer = setTimeout(async ()=>{
+        try{
+          await fetch(`${BACKEND_URL}/destinations`, {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ exits, shelters })
+          });
+        }catch(e){ warn("saveDestinationsServerDebounced failed:", e?.message||e); }
+      }, 800);
+    }
 
     /* ===== Helpers ===== */
     function toast(msg){
@@ -383,6 +409,7 @@
         const meta = await r.json();
         if (meta?.bbox_xy?.min && meta?.bbox_xy?.max) {
           SITE_BBOX = { min: meta.bbox_xy.min, max: meta.bbox_xy.max };
+          info("[meta] units:", meta?.units || "meters", "bbox_xy:", SITE_BBOX);
           updateScaleFromBBox();
         }
       }catch(_) {}
@@ -475,6 +502,7 @@
       if (!p) { toast("No ground hit — try another spot"); return false; }
       if (!pointInsideBBox(p)) { toast("Outside site bounds"); return false; }
       threat = p;
+      console.log("[threat] meters:", {x:p.x, y:p.y});
       pendingRoute = true;
       return true;
     }
@@ -521,10 +549,12 @@
         if (captureKind === "exit") {
           const id = `exit-${exitAutoId++}`;
           exits.push({ id, x: p.x, y: p.y });
+          console.log("[capture] exit meters:", {id, x:p.x, y:p.y});
           toast(`Exit added (${id})`);
         } else {
           const id = `shelter-${shelterAutoId++}`;
           shelters.push({ id, x: p.x, y: p.y });
+          console.log("[capture] shelter meters:", {id, x:p.x, y:p.y});
           toast(`Shelter added (${id})`);
         }
         autoScaleIfPossible();
