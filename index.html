@@ -146,7 +146,7 @@
 
     // “armed” placement flow for threat
     let threatArmed = false;
-    // you said this is already in; keeping here for clarity
+    // Defer route until entering (dblclick)
     let pendingRoute = false;
 
     // ===== Persistence helpers =====
@@ -427,7 +427,7 @@
       saveDestinationsServerDebounced();
     }
 
-    // Main click handler inside iframe: either capture Exit/Shelter or place Threat (+ route if not pending)
+    // Main click handler inside iframe: capture Exit/Shelter or place Threat (+ route if not pending)
     async function onViewerClick(evt){
       try{
         const hits = await _sdk.Pointer.raycast(evt.clientX, evt.clientY, { include: ['floor', 'mesh'] });
@@ -451,7 +451,7 @@
           return;
         }
 
-        // Threat placement flow (from inside view clicks)
+        // Threat placement flow (inside view clicks)
         threat = p;
         drawMarkers();
 
@@ -460,8 +460,6 @@
           updateGlassState();
         }
 
-        // If you clicked inside while already in the space and want immediate routing,
-        // keep pendingRoute logic: only route immediately if not pending
         if (!pendingRoute) await routeSafeAuto();
       }catch(e){ /* ignore */ }
     }
@@ -472,7 +470,7 @@
       markers.push({p,color});
     }
 
-    /* === NEW: direct-placement helper for threat from the glass layer === */
+    /* === Direct-placement helper for threat from the glass layer === */
     async function placeThreatAtClientXY(x, y){
       try{
         const hits = await _sdk.Pointer.raycast(x, y, { include: ['floor','mesh'] });
@@ -528,11 +526,13 @@
           const p = { x: hits[0].position.x, y: hits[0].position.z };
 
           if (captureKind === "exit") {
-            const id = `exit-${(window.exitAutoId = (window.exitAutoId||1))++}`;
+            window.exitAutoId = (window.exitAutoId || 1);
+            const id = `exit-${window.exitAutoId++}`;
             exits.push({ id, x: p.x, y: p.y });
             drawCaptureMarker(p, "#10b981");
           } else {
-            const id = `shelter-${(window.shelterAutoId = (window.shelterAutoId||1))++}`;
+            window.shelterAutoId = (window.shelterAutoId || 1);
+            const id = `shelter-${window.shelterAutoId++}`;
             shelters.push({ id, x: p.x, y: p.y });
             drawCaptureMarker(p, "#60a5fa");
           }
