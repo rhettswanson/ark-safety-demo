@@ -35,7 +35,7 @@
     .seg .shelter { color:#60a5fa; }
 
     #overlay { position:absolute; inset:0; z-index:25; pointer-events:none; }
-    #routeLayer { position:absolute; inset:0; pointer-events:none; } /* never steal clicks */
+    #routeLayer { position:absolute; inset:0; pointer-events:none; }
     #legend { position:absolute; right:10px; bottom:10px; z-index:26; background:rgba(0,0,0,.55); padding:8px 10px; border-radius:10px; font-size:12px; }
 
     /* Transparent capture layer (enabled when Capture Mode OR Threat Place is armed) */
@@ -66,7 +66,6 @@
       </div>
 
       <div class="group" style="gap:16px; border-left:1px solid #2a2a2a; padding-left:12px;">
-        <!-- “Place Threat” arms one-click placement in any mode -->
         <button class="btn" id="btnPlaceThreat" title="Arm a single click to drop a red threat pin in any viewer mode">Place Threat</button>
 
         <label class="pill" style="display:flex;gap:8px;align-items:center">
@@ -74,7 +73,6 @@
           Capture Mode (click to add Exit/Shelter)
         </label>
 
-        <!-- capture type toggle (used when Capture Mode is ON) -->
         <div class="seg" id="capType">
           <button class="exit active" data-kind="exit" type="button">Add Exit</button>
           <button class="shelter" data-kind="shelter" type="button">Add Shelter</button>
@@ -111,7 +109,7 @@
     /********* CONFIG *********/
     const MODEL  = "1ghABoaBFPZ";
     const APPKEY = "akqd0dp3hr9wz4eu70zd1rsab";
-    const BUNDLE_PATH = "bundle/dist/showcase.html";   // SDK bundle
+    const BUNDLE_PATH = "bundle/dist/showcase.html";
     const BACKEND_URL = "https://diff-adaptation-surgical-duke.trycloudflare.com";
 
     /********* LOGGING *********/
@@ -133,23 +131,21 @@
     const capType = document.getElementById("capType");
     const btnPlaceThreat = document.getElementById("btnPlaceThreat");
 
-    let SITE_BBOX = null;                // {min:[x,y], max:[x,y]}
-    let SCALE     = {s:1, offx:0, offy:0}; // meters->pixels
+    let SITE_BBOX = null;
+    let SCALE     = {s:1, offx:0, offy:0};
     let _sdk      = null;
 
     let threat = null;                   // {x,y}
     let exits = [];                      // [{id,x,y}]
     let shelters = [];                   // [{id,x,y}]
     let markers = [];                    // drawn capture points
-    let captureKind = "exit";            // current type (exit|shelter)
+    let captureKind = "exit";
     let exitAutoId = 1, shelterAutoId = 1;
 
-    // “armed” placement flow for threat
     let threatArmed = false;
-    // Defer route until entering (dblclick)
-    let pendingRoute = false;
+    let pendingRoute = false;            // defer routing until dblclick
 
-    // ===== Persistence helpers =====
+    /* ===== Local persistence ===== */
     const LS_KEY = "ark_destinations_v1";
     let saveTimer = null;
 
@@ -209,7 +205,7 @@
             setLoading(false);
             return sdk;
           }
-        } catch(e) { /* retry loop */ }
+        } catch(e) {}
         await new Promise(r=>setTimeout(r, 200));
       }
       throw new Error("Timed out waiting for MP_SDK.connect");
@@ -249,19 +245,16 @@
       cvs.height = wrap.clientHeight;
       fitFromBBox();
       if (window._lastRoute) drawRoute(window._lastRoute);
-      drawMarkers(); // keep markers visible on resize
+      drawMarkers();
     }
     window.addEventListener("resize", resizeCanvas);
 
-    function clearCanvas(){
-      ctx.clearRect(0,0,cvs.width,cvs.height);
-    }
+    function clearCanvas(){ ctx.clearRect(0,0,cvs.width,cvs.height); }
 
     function drawRoute(route){
       clearCanvas();
       if (!route || route.length < 2) { drawMarkers(); return; }
 
-      // polyline
       ctx.lineWidth = 3;
       ctx.strokeStyle = "#00aa66";
       ctx.beginPath();
@@ -271,14 +264,12 @@
       });
       ctx.stroke();
 
-      // breadcrumbs
       ctx.fillStyle = "#00aa66";
       for (let i=0;i<route.length;i+=2){
         const [px,py] = worldToCanvas(route[i][0], route[i][1]);
         ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill();
       }
 
-      // endpoints
       const endpoints = [
         {p:route[0], color:"#3b82f6", label:"Start"},
         {p:route[route.length-1], color:"#ef4444", label:"Exit/Shelter"}
@@ -296,19 +287,16 @@
     }
 
     function drawMarkers(){
-      // exits (green)
       ctx.fillStyle = "#10b981";
       for (const p of exits) {
         const [px,py] = worldToCanvas(p.x, p.y);
         ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fill();
       }
-      // shelters (blue)
       ctx.fillStyle = "#60a5fa";
       for (const p of shelters) {
         const [px,py] = worldToCanvas(p.x, p.y);
         ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fill();
       }
-      // threat pin (red)
       if (threat) {
         const [px,py] = worldToCanvas(threat.x, threat.y);
         ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.fill();
@@ -324,7 +312,7 @@
         if (meta && meta.bbox_xy && meta.bbox_xy.min && meta.bbox_xy.max) {
           SITE_BBOX = { min: meta.bbox_xy.min, max: meta.bbox_xy.max };
         }
-      }catch(_) { /* optional */ }
+      }catch(_) { }
     }
 
     async function fetchDestinations(){
@@ -347,7 +335,6 @@
 
     async function routeSafeAuto(){
       if (!threat) { alert("Place a threat pin first."); return; }
-      // Start from camera (x,z -> x,y)
       let cam = {x:0,y:0};
       try {
         const pos = await _sdk.Camera.getPosition();
@@ -427,13 +414,13 @@
       saveDestinationsServerDebounced();
     }
 
-    // Main click handler inside iframe: capture Exit/Shelter or place Threat (+ route if not pending)
+    // Main click handler inside iframe
     async function onViewerClick(evt){
       try{
-        const hits = await _sdk.Pointer.raycast(evt.clientX, evt.clientY, { include: ['floor', 'mesh'] });
+        const hits = await _sdk.Scene.raycast(evt.clientX, evt.clientY, { include: ['floor', 'mesh'] });
         if (!hits.length) return;
         const hit = hits[0];
-        const p = { x: hit.position.x, y: hit.position.z }; // (x,z)->(x,y)
+        const p = { x: hit.position.x, y: hit.position.z };
 
         if (captureToggle.checked) {
           if (captureKind === "exit") {
@@ -451,7 +438,7 @@
           return;
         }
 
-        // Threat placement flow (inside view clicks)
+        // Threat placement flow from inside
         threat = p;
         drawMarkers();
 
@@ -470,19 +457,18 @@
       markers.push({p,color});
     }
 
-    /* === Direct-placement helper for threat from the glass layer === */
+    /* Direct placement helper from the glass */
     async function placeThreatAtClientXY(x, y){
       try{
-        const hits = await _sdk.Pointer.raycast(x, y, { include: ['floor','mesh'] });
+        const hits = await _sdk.Scene.raycast(x, y, { include: ['floor','mesh'] });
         if (!hits.length) {
           console.warn("[placeThreat] no hit at", x, y);
           return false;
         }
         const hit = hits[0];
-        threat = { x: hit.position.x, y: hit.position.z }; // (x,z)->(x,y)
-        drawMarkers();            // draws the red threat
-        // Defer routing until you enter
-        pendingRoute = true;
+        threat = { x: hit.position.x, y: hit.position.z };
+        drawMarkers();
+        pendingRoute = true;  // defer until dblclick enter
         return true;
       }catch(e){
         console.warn("[placeThreat] raycast failed:", e);
@@ -494,34 +480,32 @@
     function updateGlassState(){
       const on = captureToggle.checked || threatArmed;
       glass.style.pointerEvents = on ? "auto" : "none";
-      glass.style.cursor = captureToggle.checked ? "crosshair" : (threatArmed ? "crosshair" : "default");
+      glass.style.cursor = (captureToggle.checked || threatArmed) ? "crosshair" : "default";
     }
 
     captureToggle.addEventListener("change", ()=> updateGlassState());
 
     btnPlaceThreat.addEventListener("click", ()=>{
-      threatArmed = true;           // arm a single placement click
+      threatArmed = true;
       updateGlassState();
     });
 
-    // Intercept clicks ON the glass and handle directly (raycast + action)
+    // Intercept clicks on the glass (raycast directly)
     glass.addEventListener("pointerup", async (e) => {
       const wantsCapture = captureToggle.checked;
       const wantsThreat  = threatArmed;
-
       if (!wantsCapture && !wantsThreat) return;
 
       e.preventDefault();
       e.stopPropagation();
 
-      // Convert to iframe-local coords
       const rect = mp.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
       if (wantsCapture) {
         try{
-          const hits = await _sdk.Pointer.raycast(x, y, { include: ['floor','mesh'] });
+          const hits = await _sdk.Scene.raycast(x, y, { include: ['floor','mesh'] });
           if (!hits.length) return;
           const p = { x: hits[0].position.x, y: hits[0].position.z };
 
@@ -547,8 +531,7 @@
 
       if (wantsThreat) {
         const ok = await placeThreatAtClientXY(x, y);
-        // Always disarm so normal navigation resumes
-        threatArmed = false;
+        threatArmed = false;     // always disarm
         updateGlassState();
         if (!ok) console.warn("No valid hit for threat placement.");
       }
@@ -570,17 +553,14 @@
       setLoading(true);
       resizeCanvas();
 
-      // 1) load Showcase bundle
       mp.src = buildShowcaseUrl();
 
-      // 2) connect SDK after iframe loads
       mp.addEventListener("load", async () => {
         try {
           await connectShowcase(15000);
-          // clicks inside iframe (still used when glass is off)
           mp.contentWindow.addEventListener("pointerup", onViewerClick);
 
-          // On dblclick to enter a sweep, compute route if a threat was placed outside
+          // draw route when you double-click to enter a sweep after placing in dollhouse/floor plan
           mp.contentWindow.addEventListener("dblclick", async () => {
             try {
               if (threat && pendingRoute) {
@@ -597,13 +577,12 @@
         }
       }, { once:true });
 
-      // 3) pull site bbox + destinations
       await fetchSiteMeta();
       await fetchDestinations();
       if (exits.length === 0 && shelters.length === 0) restoreLocal();
 
       fitFromBBox();
-      updateGlassState(); // init glass state
+      updateGlassState();
       drawMarkers();
       setLoading(false);
     })();
