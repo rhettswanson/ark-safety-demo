@@ -60,7 +60,7 @@
   <div id="toast"></div>
 
   <script type="module">
-    // -------- Global trap to surface the real error source --------
+    // Surface any silent promise errors
     window.addEventListener('unhandledrejection', (e) => {
       console.warn('[ARK] Unhandled promise:', e.reason);
     });
@@ -68,7 +68,7 @@
     // ---------- Backend ----------
     const BACKEND_URL = (() => {
       return location.hostname.endsWith('github.io')
-        ? 'https://care-firefox-sound-kiss.trycloudflare.com'
+        ? 'https://care-firefox-sound-kiss.trycloudflare.com'  // your current tunnel
         : 'http://localhost:7860';
     })();
 
@@ -215,14 +215,16 @@
       _sdk = await el.playingPromise;    // replaces mpSdkPlaying listener
       info("SDK connected (WebComponent)");
 
-      // ---------- Scene API attach (robust path) ----------
+      // ---------- Scene API attach (fixed) ----------
       const S = _sdk.Scene;
       if (S && typeof S.register === 'function') {
         class ArkRoute {
           onInit(ctx){
             const T = ctx.THREE || ctx.three;
             const root = new T.Group();
-            this.outputs = { objectRoot: root };
+            this.inputs  = {};                  // declare empty inputs
+            this.outputs = { objectRoot: root };// declare outputs
+
             _ARK.inScene.available=true;
             _ARK.inScene.THREE=T;
             _ARK.inScene.root=root;
@@ -236,19 +238,13 @@
           }
         }
 
-        // 1) Register single component
         await S.register('arkRoute', () => new ArkRoute());
 
-        // 2) Create a node/object, add component, start
-        let node;
-        if (typeof S.createNode === 'function') {
-          node = await S.createNode();
-        } else if (typeof S.createObject === 'function') {
-          node = await S.createObject();
-        } else {
-          throw new Error('Scene.createNode/createObject not available');
-        }
-        node.addComponent('arkRoute');
+        const node = (typeof S.createNode === 'function')
+          ? await S.createNode()
+          : await S.createObject();
+
+        node.addComponent('arkRoute', {});   // ← IMPORTANT: pass empty props object
         await node.start();
 
       } else {
