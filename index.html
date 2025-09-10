@@ -66,11 +66,8 @@
     });
 
     // ---------- Backend ----------
-    const BACKEND_URL = (() => {
-      return location.hostname.endsWith('github.io')
-        ? 'https://care-firefox-sound-kiss.trycloudflare.com'  // your current tunnel
-        : 'http://localhost:7860';
-    })();
+    // Same-origin calls (works for localhost:7860 and your Cloudflare URL)
+    const BACKEND_URL = window.location.origin;
 
     // ---------- UI helpers ----------
     const stats = document.getElementById('stats');
@@ -244,7 +241,7 @@
           ? await S.createNode()
           : await S.createObject();
 
-        node.addComponent('arkRoute', {});   // ← IMPORTANT: pass empty props object
+        node.addComponent('arkRoute', {});   // IMPORTANT: pass empty props object
         await node.start();
 
       } else {
