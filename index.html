@@ -19,6 +19,11 @@
     #toast{position:fixed; right:12px; bottom:12px; background:#111827; border:1px solid #374151; color:#e5e7eb; padding:8px 12px; border-radius:8px; font-size:13px; opacity:0; transform:translateY(6px); transition:all .25s}
     #toast.show{opacity:1; transform:translateY(0)}
   </style>
+
+  <!-- ✅ This imports the Matterport webcomponent -->
+  <script type="module">
+    import 'https://unpkg.com/@matterport/webcomponent?module';
+  </script>
 </head>
 <body>
   <div class="topbar">
@@ -39,7 +44,7 @@
   </div>
 
   <div id="stage">
-    <!-- WebComponent (short form) -->
+    <!-- WebComponent (short form with attributes) -->
     <matterport-viewer id="mp"
       style="width:100%;height:100%;border:0;display:block"
       m="1ghABoaBFPZ"
@@ -68,10 +73,8 @@
       toastTimer = setTimeout(()=>toastEl.classList.remove('show'), ms);
     }
 
-    // Overlay canvas helpers (same as before)
     const overlay = document.getElementById('overlay');
     const ctx = overlay.getContext('2d');
-    let SITE_BBOX = null;
     function sizeOverlay(){ overlay.width=overlay.clientWidth; overlay.height=overlay.clientHeight; }
     function clearCanvas(){ ctx.clearRect(0,0,overlay.width, overlay.height); }
     function drawRoute(route){
@@ -100,7 +103,7 @@
         const mesh=routeMeshFromPolyline(poly,0.1);
         if(mesh){_ARK.inScene.scene.add(mesh);_ARK.inScene.routeMesh=mesh; clearCanvas(); return;}
       }
-      drawRoute(poly); // fallback
+      drawRoute(poly);
     }
     function resetRoute(){
       if(_ARK.inScene.routeMesh&&_ARK.inScene.scene){_ARK.inScene.scene.remove(_ARK.inScene.routeMesh);}
@@ -108,11 +111,9 @@
     }
 
     let _sdk=null; let threat=null;
-
     async function isGroundable(){
       try{const rect=overlay.getBoundingClientRect();const hit=await _sdk.Renderer.getWorldPositionData({x:rect.width/2,y:rect.height/2});return !!(hit&&hit.normal&&hit.normal.y>0.7);}catch{return false;}
     }
-
     async function routeSafeAuto(){
       if(!await isGroundable()){toast("Move inside first");return;}
       if(!threat){toast("Place a threat");return;}
@@ -127,7 +128,6 @@
       window._lastRoute=out.route; stats.textContent=`Length: ${out.length_m?.toFixed(1)} m · ${out.mode_selected||out.decision}`;
       renderRoute(out.route);
     }
-
     function enableThreatPlacement(){
       toast("Click in scene to place threat");
       window.addEventListener('click', onClickOnce,{once:true});
@@ -141,12 +141,14 @@
     document.getElementById('btnReset').addEventListener('click', resetRoute);
 
     // Boot: listen for mpSdkPlaying
-    const el=document.getElementById('mp');
-    el.addEventListener('mpSdkPlaying', async (e)=>{
-      _sdk=e.detail.mpSdk; info("SDK connected (WebComponent)");
-      _sdk.Scene.register('arkRoute',class{onInit(ctx){_ARK.inScene.available=true;_ARK.inScene.scene=ctx.scene;_ARK.inScene.THREE=ctx.THREE;console.log("[ARK] In-scene enabled");}});
-      await _sdk.Scene.add('arkRoute');
-    },{once:true});
+    customElements.whenDefined('matterport-viewer').then(()=>{
+      const el=document.getElementById('mp');
+      el.addEventListener('mpSdkPlaying', async (e)=>{
+        _sdk=e.detail.mpSdk; info("SDK connected (WebComponent)");
+        _sdk.Scene.register('arkRoute',class{onInit(ctx){_ARK.inScene.available=true;_ARK.inScene.scene=ctx.scene;_ARK.inScene.THREE=ctx.THREE;console.log("[ARK] In-scene enabled");}});
+        await _sdk.Scene.add('arkRoute');
+      },{once:true});
+    });
 
     sizeOverlay();
   </script>
