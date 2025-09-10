@@ -1,177 +1,154 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Ark SafeRoute — Phase 1.2 (WebComponent)</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ARK Safety Demo (WebComponent + Scene API)</title>
+
+  <!-- Matterport WebComponent (ESM) -->
+  <script type="module" src="https://unpkg.com/@matterport/webcomponent@0.1.45/dist/matterport-viewer.esm.js?module"></script>
+
   <style>
-    :root { color-scheme: dark; }
-    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0f1a; color:#e5e7eb;}
-    .topbar{position:fixed; inset:0 0 auto 0; display:flex; gap:16px; align-items:center; padding:10px 12px; background:rgba(10,14,25,.85); backdrop-filter: blur(6px); border-bottom:1px solid #1f2937; z-index:10}
-    .pill{background:#111827; border:1px solid #374151; color:#9ca3af; border-radius:999px; padding:4px 10px; font-size:12px}
-    .group{display:flex; align-items:center; gap:10px}
-    .btn{cursor:pointer; background:#0f172a; color:#e5e7eb; border:1px solid #1f2937; border-radius:8px; padding:8px 12px; font-weight:600}
-    .btn:disabled{opacity:.5; cursor:not-allowed}
-    .field{display:flex; align-items:center; gap:6px}
-    #stats{margin-left:auto; color:#9ca3af; font-size:13px}
-    #stage{position:absolute; inset:48px 0 0 0; background:#000}
-    #overlay{position:absolute; inset:48px 0 0 0; pointer-events:none}
-    #toast{position:fixed; right:12px; bottom:12px; background:#111827; border:1px solid #374151; color:#e5e7eb; padding:8px 12px; border-radius:8px; font-size:13px; opacity:0; transform:translateY(6px); transition:all .25s}
-    #toast.show{opacity:1; transform:translateY(0)}
+    html, body { height: 100%; margin: 0; background: #0b0f14; color: #e8edf2; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    .app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+    header { display: flex; gap: .5rem; align-items: center; padding: .75rem 1rem; background: #11161d; border-bottom: 1px solid #1f2a37; }
+    header .tag { font-weight: 600; opacity: .85; }
+    header button { all: unset; background: #1f2a37; padding: .45rem .7rem; border-radius: .5rem; cursor: pointer; border: 1px solid #2b3949; }
+    header button:hover { background:#243244; }
+    header button:active { background:#1b2633; }
+    header .spacer { flex: 1 1 auto; opacity:.6; font-size:.9rem; }
+    .stage { position: relative; height: 100%; overflow: hidden; background: #000; }
+    matterport-viewer { position: absolute; inset: 0; width: 100%; height: 100%; }
+    #overlay { position: absolute; inset: 0; pointer-events: none; }
+    .hud { position: absolute; left: 12px; bottom: 12px; background: rgba(9,12,17,.72); border: 1px solid rgba(64,86,110,.55); padding: .35rem .6rem; border-radius: .5rem; font-size: .85rem; user-select: none; }
   </style>
-
-  <script type="module">
-    import 'https://unpkg.com/@matterport/webcomponent?module';
-  </script>
 </head>
+
 <body>
-  <div class="topbar">
-    <span class="pill">Phase 1.2</span>
-    <div class="group">
-      <button class="btn" id="btnPlaceThreat">Place Threat</button>
-      <div class="field">
-        <label>Mode</label>
-        <select id="modeSelect" class="btn" style="padding:6px 10px; background:#0f172a;">
-          <option value="auto" selected>Auto (Recommended)</option>
-          <option value="evac">Force Evac</option>
-          <option value="shelter">Force Shelter</option>
-        </select>
-      </div>
-      <button class="btn" id="btnReset">Reset</button>
+  <div class="app">
+    <header>
+      <span class="tag">ARK</span>
+      <button id="btnPlaceThreat">Place Threat</button>
+      <button id="btnReset">Reset</button>
+      <span class="spacer" id="status">Loading…</span>
+    </header>
+
+    <div class="stage">
+      <matterport-viewer
+        id="mpv"
+        m="1ghABoaBFPZ"
+        application-key="akqd0dp3hr9wz4eu70zd1rsab"
+        asset-base="bundle"
+        autoplay
+        play>
+      </matterport-viewer>
+
+      <canvas id="overlay"></canvas>
+      <div class="hud" id="hud">Idle</div>
     </div>
-    <div id="stats">Loading…</div>
   </div>
-
-  <div id="stage">
-    <matterport-viewer
-      id="mp"
-      style="width:100%;height:100%;border:0;display:block"
-      m="1ghABoaBFPZ"
-      application-key="akqd0dp3hr9wz4eu70zd1rsab"
-      asset-base="bundle"
-      autoplay
-      qs
-      play>
-    </matterport-viewer>
-  </div>
-
-  <canvas id="overlay"></canvas>
-  <div id="toast"></div>
 
   <script type="module">
-    const BACKEND_URL = window.location.origin.includes('github.io')
-      ? 'https://contents-body-portions-si.trycloudflare.com'
-      : 'http://localhost:7860';
+    // ----------------------------
+    // Config
+    // ----------------------------
+    const BACKEND_URL = window.location.origin; // works for localhost and Cloudflare
 
-    const stats = document.getElementById('stats');
-    const toastEl = document.getElementById('toast');
-    function info(msg){ console.log('[ARK]', msg); stats.textContent = msg; }
-    function toast(msg, ms=2200){
-      toastEl.textContent = msg;
-      toastEl.classList.add('show');
-      setTimeout(()=>toastEl.classList.remove('show'), ms);
-    }
+    const hud = document.getElementById('hud');
+    const statusEl = document.getElementById('status');
+    const say = (msg) => { hud.textContent = msg; console.log('[ARK]', msg); };
+    const status = (msg) => { statusEl.textContent = msg; };
 
     const overlay = document.getElementById('overlay');
-    const ctx = overlay.getContext('2d');
-    function sizeOverlay(){ overlay.width=overlay.clientWidth; overlay.height=overlay.clientHeight; }
-    function clearCanvas(){ ctx.clearRect(0,0,overlay.width, overlay.height); }
-    function drawRoute(route){
-      clearCanvas(); if (!route||route.length<2) return;
-      ctx.lineJoin="round"; ctx.lineCap="round";
-      ctx.lineWidth=14; ctx.strokeStyle="rgba(0,200,130,0.25)";
-      ctx.beginPath(); route.forEach(([x,y],i)=>{const [px,py]=[overlay.width/2+x*10,overlay.height/2-y*10]; i?ctx.lineTo(px,py):ctx.moveTo(px,py);}); ctx.stroke();
-      ctx.setLineDash([18,10]); ctx.lineDashOffset=-(performance.now()*0.05);
-      ctx.lineWidth=7; ctx.strokeStyle="#00C882";
-      ctx.beginPath(); route.forEach(([x,y],i)=>{const [px,py]=[overlay.width/2+x*10,overlay.height/2-y*10]; i?ctx.lineTo(px,py):ctx.moveTo(px,py);}); ctx.stroke(); ctx.setLineDash([]);
+    const ctx2d = overlay.getContext('2d');
+    function sizeOverlay() {
+      overlay.width = overlay.clientWidth;
+      overlay.height = overlay.clientHeight;
+      ctx2d.clearRect(0,0,overlay.width,overlay.height);
+    }
+    window.addEventListener('resize', sizeOverlay);
+
+    const _ARK = { inScene: { available:false, THREE:null, root:null, routeMesh:null }, threat:null, lastRoute:null };
+
+    function drawOverlayRoute(route) {
+      ctx2d.clearRect(0,0,overlay.width,overlay.height);
+      if (!route) return;
+      ctx2d.beginPath();
+      ctx2d.moveTo(20, overlay.height-20);
+      ctx2d.lineTo(overlay.width-20, 20);
+      ctx2d.lineWidth=4;
+      ctx2d.strokeStyle="#21d38c";
+      ctx2d.setLineDash([12,8]);
+      ctx2d.stroke();
+      ctx2d.setLineDash([]);
     }
 
-    window._ARK = { inScene:{ available:false, scene:null, THREE:null, root:null, routeMesh:null }};
-    let _sdk=null, threat=null;
-
-    function resetRoute(){
-      if(_ARK.inScene.routeMesh && _ARK.inScene.root){
+    function resetRoute() {
+      _ARK.lastRoute=null; _ARK.threat=null;
+      ctx2d.clearRect(0,0,overlay.width,overlay.height);
+      if (_ARK.inScene.available && _ARK.inScene.routeMesh && _ARK.inScene.root) {
         _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
+        _ARK.inScene.routeMesh=null;
       }
-      _ARK.inScene.routeMesh=null; clearCanvas(); window._lastRoute=null;
+      say("Reset");
     }
 
-    // --------- Enable threat placement using Pointer API ---------
-    let unsubscribePointer=null;
-    function enableThreatPlacement(){
-      toast("Click inside the viewer to place threat");
-      if(unsubscribePointer){ unsubscribePointer(); unsubscribePointer=null; }
-      unsubscribePointer = _sdk.Pointer.intersection.subscribe((ix)=>{
-        if(ix?.position){
-          threat = { x:ix.position.x, y:ix.position.z };
-          toast("Threat placed");
-          routeSafeAuto();
-          unsubscribePointer(); unsubscribePointer=null;
-        }
-      });
-    }
-
-    document.getElementById('btnPlaceThreat').addEventListener('click', enableThreatPlacement);
     document.getElementById('btnReset').addEventListener('click', resetRoute);
 
-    async function routeSafeAuto(){
-      if(!threat){ toast("Place a threat first"); return; }
-      const pos=await _sdk.Camera.getPosition();
-      const cam={x:pos.x,y:pos.z};
-      const url = `${BACKEND_URL}/route/auto`;
-      const body={start:cam, threat};
-      const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      if(!res.ok){ toast(`Route error ${res.status}`); return; }
-      const out=await res.json();
-      window._lastRoute=out.route;
-      stats.textContent=`Length: ${out.length_m?.toFixed(1)} m`;
-      drawRoute(out.route);
-    }
+    // ----------------------------
+    // Place threat (demo logic)
+    // ----------------------------
+    document.getElementById('btnPlaceThreat').addEventListener('click', () => {
+      _ARK.threat = { placed:true };
+      _ARK.lastRoute = { id:"demo" };
+      say("Threat placed (demo)");
+      drawOverlayRoute(_ARK.lastRoute);
+      // TODO: replace with fetch(`${BACKEND_URL}/route/auto`, { ... })
+    });
 
-    // --------- SDK bootstrap ---------
+    // ----------------------------
+    // Bootstrap
+    // ----------------------------
+    const viewer = document.getElementById('mpv');
     sizeOverlay();
+
     (async () => {
       await customElements.whenDefined('matterport-viewer');
-      const el=document.getElementById('mp');
-      _sdk = await el.playingPromise;
-      info("SDK connected (WebComponent)");
+      await viewer.playingPromise;
 
-      try {
-        const S=_sdk.Scene;
-        if(S && typeof S.registerComponents==='function' && typeof S.createNodes==='function'){
-          await S.registerComponents([{
-            name:'arkRoute',
-            factory:()=>({
-              inputs:{}, outputs:{objectRoot:null},
-              onInit(ctx){
-                const root=new ctx.THREE.Group();
-                this.outputs.objectRoot=root;
-                _ARK.inScene.available=true;
-                _ARK.inScene.THREE=ctx.THREE;
-                _ARK.inScene.root=root;
-              },
-              onTick(){},
-              onDestroy(){
-                _ARK.inScene.available=false;
-                _ARK.inScene.root=null;
-                _ARK.inScene.THREE=null;
-                _ARK.inScene.routeMesh=null;
-              }
-            })
-          }]);
-          const { nodes }=await S.createNodes([{components:[{name:'arkRoute'}]}]);
-          await nodes[0].start();
-        } else {
-          console.warn('[ARK] Scene API not available; overlay fallback in use.');
-          _ARK.inScene.available=false;
+      /** @type {import('@matterport/webcomponent').MpSdk} */
+      const _sdk = await viewer.getSdk();
+      status("SDK connected (WebComponent)");
+
+      const S = _sdk.Scene;
+      if (S && typeof S.register==='function' && typeof S.createNode==='function') {
+        class ArkRoute {
+          onInit(ctx) {
+            const T=ctx.THREE; const root=new T.Group();
+            this.outputs={ objectRoot: root };
+            _ARK.inScene.available=true;
+            _ARK.inScene.THREE=T;
+            _ARK.inScene.root=root;
+            say("In-scene component initialized");
+          }
+          onTick(){}
+          onDestroy(){ _ARK.inScene.available=false; _ARK.inScene.root=null; _ARK.inScene.THREE=null; _ARK.inScene.routeMesh=null; }
         }
-      } catch(e){
-        console.warn('[ARK] bootstrap failed:', e);
-        _ARK.inScene.available=false;
+        await S.register('arkRoute', ()=>new ArkRoute());
+        const node=await S.createNode();
+        node.addComponent('arkRoute', {});
+        await node.start();
+      } else {
+        console.warn("[ARK] Scene API not available; overlay fallback.");
       }
 
-      window.addEventListener('resize', sizeOverlay);
-    })();
+      try {
+        _sdk.Camera.pose.subscribe(()=>{ if (_ARK.lastRoute && !_ARK.inScene.available) drawOverlayRoute(_ARK.lastRoute); });
+      } catch(err) {
+        console.warn("[ARK] pose.subscribe failed", err);
+      }
+
+    })().catch(err => { console.warn("[ARK] bootstrap failed:", err); });
   </script>
 </body>
 </html>
