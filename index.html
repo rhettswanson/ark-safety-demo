@@ -231,8 +231,11 @@
           onDestroy(){ _ARK.inScene.available=false; _ARK.inScene.root=null; _ARK.inScene.THREE=null; _ARK.inScene.routeMesh=null; }
         }
         S.registerComponents([{ name:'arkRoute', factory:()=>new ArkRoute() }]);
-        const { nodes } = await S.createNodes([{ components:[{ name:'arkRoute', props:{}, inputs:{} }]}]);
+        const { nodes } = await S.createNodes([
+          { components:[{ name:'arkRoute', props:{} }] }
+        ]);
         await nodes[0].start();
+
       } else {
         console.warn('[ARK] Scene API not available; overlay fallback in use.');
         _ARK.inScene.available=false;
