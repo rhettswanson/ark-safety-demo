@@ -98,49 +98,38 @@
     }
 
     // -------------------- Scene API route injection --------------------
-    // Central state for in-scene route rendering
     window._ARK = { 
       inScene:{
         available:false,
         THREE:null,
-        root:null,       // Group attached to scene graph
-        routeMesh:null,  // Current mesh
+        root:null,
+        routeMesh:null,
       }
     };
 
-    // Build a TubeGeometry from world XY polyline at a fixed floor Y
     function buildRouteMesh(poly, floorY=0.1){
       const T=_ARK.inScene.THREE; 
       if(!T||!poly||poly.length<2) return null;
-
       const pts=poly.map(([x,y])=>new T.Vector3(x,floorY,y));
-      // smooth but faithful to points
       const curve=new T.CatmullRomCurve3(pts,false,'catmullrom',0.02);
       const tubularSegments=Math.max(40, pts.length*10);
       const radius=0.12;
       const radialSegments=12;
-
       const geom=new T.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
-      const mat=new T.MeshStandardMaterial({
-        color:0x00c882, roughness:0.6, metalness:0
-      });
-      mat.emissive=new T.Color(0x00c882);
-      mat.emissiveIntensity=0.35;
+      const mat=new T.MeshStandardMaterial({ color:0x00c882, roughness:0.6, metalness:0 });
+      mat.emissive=new T.Color(0x00c882); mat.emissiveIntensity=0.35;
       const mesh=new T.Mesh(geom,mat);
-      // faint halo shell
       const haloGeom=new T.TubeGeometry(curve, tubularSegments, radius*1.5, 8, false);
       const haloMat=new T.MeshBasicMaterial({ color:0x00c882, transparent:true, opacity:0.15 });
       const halo=new T.Mesh(haloGeom, haloMat);
       const group=new T.Group();
-      group.add(mesh);
-      group.add(halo);
-      group.renderOrder = 999; // draw over most scene content
+      group.add(mesh); group.add(halo);
+      group.renderOrder = 999;
       return group;
     }
 
     function renderRoute(poly){
       if(_ARK.inScene.available && _ARK.inScene.root){
-        // clear old
         if(_ARK.inScene.routeMesh){
           _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
           disposeRoute(_ARK.inScene.routeMesh);
@@ -149,11 +138,10 @@
         if(group){
           _ARK.inScene.root.add(group);
           _ARK.inScene.routeMesh = group;
-          clearCanvas(); // hide fallback if we’re in-scene
+          clearCanvas();
           return;
         }
       }
-      // fallback
       drawRoute(poly);
     }
 
@@ -185,7 +173,7 @@
     // -------------------- App logic --------------------
     let _sdk=null; 
     let threat=null;
-    let pendingRoute=false;     // route only after viewer is inside
+    let pendingRoute=false;
     let unsubPointer=null;
 
     async function ensureInside(){
@@ -210,24 +198,22 @@
     async function routeSafeAuto(){
       if(!await isGroundable()){ toast("Move inside first"); return; }
       if(!threat){ toast("Place a threat"); return; }
-
-      const pos=await _sdk.Camera.getPosition();
+      const pos=await _sdk.Camera.getPosition(); 
       const cam={x:pos.x,y:pos.z};
       const mode=(document.getElementById("modeSelect")?.value||"auto").toLowerCase();
       const url = mode==="auto" ? `${BACKEND_URL}/route/auto` : `${BACKEND_URL}/route_safe`;
       const body= mode==="auto" ? {start:cam,threat} : {start:cam,threat,prefer:mode==="evac"?"exit":"shelter"};
-
       const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       if(!res.ok){ toast(`Route error ${res.status}`); return; }
       const out=await res.json();
-
       window._lastRoute=out.route;
       stats.textContent=`Length: ${out.length_m?.toFixed(1)} m · ${out.mode_selected||out.decision||"—"}`;
       renderRoute(out.route);
     }
 
     function disarmPointer(){
-      if (unsubPointer){ unsubPointer(); unsubPointer=null; }
+      if (typeof unsubPointer === 'function') { unsubPointer(); }
+      unsubPointer=null;
       document.body.style.cursor='default';
     }
     function armPointerOnce(){
@@ -238,7 +224,7 @@
           const hit = await _sdk.Renderer.getWorldPositionData({ x: ev.clientX, y: ev.clientY });
           if(hit?.position&&hit.normal?.y>0.4){
             threat={x:hit.position.x,y:hit.position.z};
-            pendingRoute=true; // defer routing until viewer is valid
+            pendingRoute=true;
             toast("Threat placed. Routing will start once viewer is inside.");
             maybeTryRoute();
           }else{
@@ -259,9 +245,9 @@
     }
 
     async function enableThreatPlacement(){
-      await ensureInside();     // force inside before arming
+      await ensureInside();
       toast("Click in scene to place threat");
-      armPointerOnce();         // one-shot pointer stream
+      armPointerOnce();
     }
 
     document.getElementById('btnPlaceThreat').addEventListener('click', enableThreatPlacement);
@@ -282,18 +268,16 @@
           console.warn('[ARK] Could not log Scene keys', err);
         }
 
-        // Attempt to enable Scene API
+        // Enable Scene API via node/component flow (your build)
         const S = _sdk.Scene;
-        if (S && typeof S.register === 'function' && typeof S.create === 'function') {
+        if (S && typeof S.register === 'function' && typeof S.createNode === 'function') {
           class ArkRoute {
             onInit(ctx){
               const T = ctx.THREE || ctx.three;
               this.outputs = this.outputs || {};
-              // Dedicated root mounted to scene graph; we add route meshes under this
               const root = new T.Group();
               this.outputs.objectRoot = root;
 
-              // Optional: log THREE revision for debugging
               try { console.log('[ARK] THREE revision:', T && T.REVISION); } catch {}
 
               _ARK.inScene.available = true;
@@ -311,7 +295,9 @@
             }
           }
           S.register('arkRoute', () => new ArkRoute());
-          await S.create('arkRoute');
+          const node = await S.createNode();
+          node.addComponent('arkRoute');
+          await node.start();
         } else {
           console.warn('[ARK] Scene API not available; overlay fallback in use.');
           _ARK.inScene.available=false;
