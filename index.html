@@ -64,7 +64,7 @@
     // -------------------- Backend --------------------
     const BACKEND_URL = (() => {
       return location.hostname.endsWith('github.io')
-        ? 'https://care-firefox-sound-kiss.trycloudflare.com'
+        ? 'https://potter-democratic-networking-involves.trycloudflare.com'
         : 'http://localhost:7860';
     })();
 
@@ -217,7 +217,7 @@
       document.body.style.cursor='crosshair';
 
       const onClick = async (ev) => {
-        document.removeEventListener('click', onClick, true);
+        document.removeEventListener('click', onClick, { capture:true });
         document.body.style.cursor='default';
         try{
           const hit = await _sdk.Renderer.getWorldPositionData({ x: ev.clientX, y: ev.clientY });
@@ -235,7 +235,7 @@
         }
       };
 
-      document.addEventListener('click', onClick, { capture: true });
+      document.addEventListener('click', onClick, { capture:true });
     }
 
     async function maybeTryRoute(){
@@ -302,7 +302,7 @@
         _sdk.Camera.pose.subscribe(async ()=>{
           if (window._lastRoute && !_ARK.inScene.available) drawRoute(window._lastRoute);
           maybeTryRoute();
-        }); 
+        });
       }catch{}
     })();
 
