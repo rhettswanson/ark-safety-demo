@@ -233,10 +233,10 @@
   _sdk.Camera.pose.subscribe(async ()=>{
     if (window._lastRoute && !_ARK.inScene.available) drawRoute(window._lastRoute);
     maybeTryRoute();
-  });
-} catch (err) {
-  console.warn("[ARK] pose.subscribe failed", err);
-}
+    });
+  } catch (err) {
+    console.warn("[ARK] pose.subscribe failed", err);
+  }
 
 })();
 
