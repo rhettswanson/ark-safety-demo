@@ -143,7 +143,7 @@
       el.addEventListener('mpSdkPlaying', async (e)=>{
         _sdk=e.detail.mpSdk; info("SDK connected (WebComponent)");
         _sdk.Scene.register('arkRoute',class{onInit(ctx){_ARK.inScene.available=true;_ARK.inScene.scene=ctx.scene;_ARK.inScene.THREE=ctx.THREE;console.log("[ARK] In-scene enabled");}});
-        await _sdk.Scene.add('arkRoute');
+        await _sdk.Scene.create('arkRoute');
       },{once:true});
     });
 
