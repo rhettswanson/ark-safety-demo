@@ -215,9 +215,9 @@
       _sdk = await el.playingPromise;    // replaces mpSdkPlaying listener
       info("SDK connected (WebComponent)");
 
-      // Scene API attach (if available)
-      const S=_sdk.Scene;
-      if(S && typeof S.registerComponents==='function' && typeof S.createNodes==='function'){
+      // ---------- Scene API attach (robust path) ----------
+      const S = _sdk.Scene;
+      if (S && typeof S.register === 'function') {
         class ArkRoute {
           onInit(ctx){
             const T = ctx.THREE || ctx.three;
@@ -228,19 +228,28 @@
             _ARK.inScene.root=root;
           }
           onTick() {}
-          onDestroy(){ _ARK.inScene.available=false; _ARK.inScene.root=null; _ARK.inScene.THREE=null; _ARK.inScene.routeMesh=null; }
+          onDestroy(){
+            _ARK.inScene.available=false;
+            _ARK.inScene.root=null;
+            _ARK.inScene.THREE=null;
+            _ARK.inScene.routeMesh=null;
+          }
         }
-        // 1) Register using an object map (NOT an array)
-              S.registerComponents({
-                arkRoute: () => new ArkRoute(),
-              });
 
-        // 2) Create a node that instantiates that component
-              const { nodes } = await S.createNodes([
-                { components: [{ name: 'arkRoute' }] }
-              ]);
-              await nodes[0].start();
+        // 1) Register single component
+        await S.register('arkRoute', () => new ArkRoute());
 
+        // 2) Create a node/object, add component, start
+        let node;
+        if (typeof S.createNode === 'function') {
+          node = await S.createNode();
+        } else if (typeof S.createObject === 'function') {
+          node = await S.createObject();
+        } else {
+          throw new Error('Scene.createNode/createObject not available');
+        }
+        node.addComponent('arkRoute');
+        await node.start();
 
       } else {
         console.warn('[ARK] Scene API not available; overlay fallback in use.');
@@ -256,7 +265,7 @@
       } catch (err) {
         console.warn("[ARK] pose.subscribe failed", err);
       }
-    })().catch(err => console.warn('[ARK] bootstrap failed:', err)); // <— catch any leaked rejection
+    })().catch(err => console.warn('[ARK] bootstrap failed:', err));
 
     sizeOverlay();
     window.addEventListener('resize', sizeOverlay);
