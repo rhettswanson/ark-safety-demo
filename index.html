@@ -294,10 +294,17 @@
               _ARK.inScene.routeMesh = null;
             }
           }
-          S.register('arkRoute', () => new ArkRoute());
-          const node = await S.createNode();
-          node.addComponent('arkRoute', {}, {});   // props, inputs
-          await node.start();
+          S.registerComponents({ arkRoute: () => new ArkRoute() });
+          const { nodes } = await S.createNodes([
+  {
+    components: [
+      { name: 'arkRoute', props: {}, inputs: {} } // <- explicit empty objects
+    ]
+  }
+]);
+
+        // Start the node
+           await nodes[0].start();
         } else {
           console.warn('[ARK] Scene API not available; overlay fallback in use.');
           _ARK.inScene.available=false;
