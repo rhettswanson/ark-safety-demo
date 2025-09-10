@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Ark SafeRoute — Phase 1.2</title>
+  <title>Ark SafeRoute — Phase 1.2 (WebComponent)</title>
   <style>
     :root { color-scheme: dark; }
     body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0f1a; color:#e5e7eb;}
@@ -35,347 +35,120 @@
       </div>
       <button class="btn" id="btnReset">Reset</button>
     </div>
-    <div id="stats">Ready</div>
+    <div id="stats">Loading…</div>
   </div>
 
   <div id="stage">
-    <iframe id="showcase" style="width:100%;height:100%;border:0;display:block"></iframe>
+    <!-- WebComponent (short form) -->
+    <matterport-viewer id="mp"
+      style="width:100%;height:100%;border:0;display:block"
+      m="1ghABoaBFPZ"
+      application-key="akqd0dp3hr9wz4eu70zd1rsab"
+      autoplay
+      qs
+      play>
+    </matterport-viewer>
   </div>
+
+  <!-- Overlay canvas (labels + fallback) -->
   <canvas id="overlay"></canvas>
   <div id="toast"></div>
 
-  <script>
-    /**********************
-     * Config (your values)
-     **********************/
+  <script type="module">
     const BACKEND_URL = "https://bed-drums-vermont-dodge.trycloudflare.com";
-    const MODEL_ID    = "1ghABoaBFPZ";
-    const SDK_KEY     = "akqd0dp3hr9wz4eu70zd1rsab";
-    const SDK_VERSION = "3.13";
 
-    /**********************
-     * HUD helpers
-     **********************/
     const stats = document.getElementById('stats');
     const toastEl = document.getElementById('toast');
-    function info(msg){ console.log('[ARK]',msg); stats.textContent = msg; }
+    function info(msg){ console.log('[ARK]', msg); stats.textContent = msg; }
     let toastTimer;
-    function toast(msg, ms=2000){
+    function toast(msg, ms=2200){
       toastEl.textContent = msg;
       toastEl.classList.add('show');
       clearTimeout(toastTimer);
       toastTimer = setTimeout(()=>toastEl.classList.remove('show'), ms);
     }
 
-    /**********************
-     * Overlay canvas (fallback)
-     **********************/
+    // Overlay canvas helpers (same as before)
     const overlay = document.getElementById('overlay');
     const ctx = overlay.getContext('2d');
     let SITE_BBOX = null;
-    function resize(){
-      overlay.width = overlay.clientWidth;
-      overlay.height = overlay.clientHeight;
-      if (window._lastRoute) drawRoute(window._lastRoute);
-    }
-    window.addEventListener('resize', resize);
+    function sizeOverlay(){ overlay.width=overlay.clientWidth; overlay.height=overlay.clientHeight; }
     function clearCanvas(){ ctx.clearRect(0,0,overlay.width, overlay.height); }
-    function fitFromBBox(){
-      if (window._lastRoute) drawRoute(window._lastRoute);
-    }
-    function worldToCanvas(x,y){
-      if (!SITE_BBOX){
-        return [overlay.width/2 + x*10, overlay.height/2 - y*10];
-      }
-      const [minX,minY] = SITE_BBOX.min;
-      const [maxX,maxY] = SITE_BBOX.max;
-      const w = maxX - minX, h = maxY - minY;
-      const pad = 40;
-      const sx = (overlay.width  - 2*pad) / (w || 1);
-      const sy = (overlay.height - 2*pad) / (h || 1);
-      const s = Math.min(sx, sy);
-      const px = pad + (x - minX) * s;
-      const py = overlay.height - (pad + (y - minY) * s);
-      return [px, py];
-    }
     function drawRoute(route){
-      clearCanvas();
-      if (!route || route.length < 2) return;
-
-      // Apple-like look: glow + animated dash
-      ctx.lineJoin = "round";
-      ctx.lineCap  = "round";
-
-      // Glow
-      ctx.lineWidth = 14;
-      ctx.strokeStyle = "rgba(0, 200, 130, 0.25)";
-      ctx.beginPath();
-      route.forEach((p,i)=>{
-        const [px,py] = worldToCanvas(p[0], p[1]);
-        if (i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
-      });
-      ctx.stroke();
-
-      // Core (animated dash)
-      ctx.setLineDash([18, 10]);
-      ctx.lineDashOffset = -(performance.now()*0.05);
-      ctx.lineWidth = 7;
-      ctx.strokeStyle = "#00C882";
-      ctx.beginPath();
-      route.forEach((p,i)=>{
-        const [px,py] = worldToCanvas(p[0], p[1]);
-        if (i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
-      });
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Start/End markers
-      const endpoints = [
-        {p:route[0], color:"#3b82f6", label:"Start"},
-        {p:route[route.length-1], color:"#10b981", label:"Safe Point"}
-      ];
-      ctx.font = "12px system-ui";
-      endpoints.forEach(({p,color,label})=>{
-        const [px,py] = worldToCanvas(p[0], p[1]);
-        ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle = "#e5e7eb";
-        ctx.fillText(label, px+8, py-8);
-      });
+      clearCanvas(); if (!route||route.length<2) return;
+      ctx.lineJoin="round"; ctx.lineCap="round";
+      ctx.lineWidth=14; ctx.strokeStyle="rgba(0,200,130,0.25)";
+      ctx.beginPath(); route.forEach(([x,y],i)=>{const [px,py]=[overlay.width/2+x*10,overlay.height/2-y*10]; if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py);}); ctx.stroke();
+      ctx.setLineDash([18,10]); ctx.lineDashOffset=-(performance.now()*0.05);
+      ctx.lineWidth=7; ctx.strokeStyle="#00C882"; ctx.beginPath(); route.forEach(([x,y],i)=>{const [px,py]=[overlay.width/2+x*10,overlay.height/2-y*10]; if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py);}); ctx.stroke(); ctx.setLineDash([]);
     }
 
-    /**********************
-     * Matterport SDK hookup
-     **********************/
-    let _sdk = null;
-    let pendingRouteWhenInside = false;
-    let threat = null;
-
-    // Boot iframe with your model + connect SDK
-    async function getSdk(){
-      const iframe = document.getElementById('showcase');
-      const url = new URL('https://my.matterport.com/show/');
-      url.searchParams.set('m', MODEL_ID);
-      url.searchParams.set('play', '1');
-      url.searchParams.set('qs', '1');
-      iframe.src = url.toString();
-
-      if (!window.MP_SDK) {
-        await new Promise(r => {
-          const t = setInterval(()=>{ if (window.MP_SDK){ clearInterval(t); r(); } }, 100);
-        });
-      }
-      return await window.MP_SDK.connect(iframe, SDK_KEY, SDK_VERSION);
-    }
-
-    // Grounding check (don’t route until we’re “inside”)
-    async function isGroundableAtCenter(){
-      try{
-        const rect = overlay.getBoundingClientRect();
-        const x = rect.width/2, y = rect.height/2;
-        const hit = await _sdk.Renderer.getWorldPositionData({ x, y });
-        return !!(hit && hit.normal && hit.normal.y > 0.7);
-      }catch(e){
-        return false;
-      }
-    }
-
-    /**********************
-     * In-scene TubeGeometry (fallback to overlay)
-     **********************/
-    window._ARK = window._ARK || {};
-    _ARK.inScene = { available:false, scene:null, THREE:null, routeMesh:null };
-
+    // In-scene helpers
+    window._ARK = { inScene:{ available:false, scene:null, THREE:null, routeMesh:null }};
     function routeMeshFromPolyline(poly, floorY=0.1){
-      const THREE = _ARK.inScene.THREE;
-      if (!THREE || !Array.isArray(poly) || poly.length < 2) return null;
-      const pts = poly.map(([x,y]) => new THREE.Vector3(x, floorY, y));
-      const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.02);
-      const tubularSegments = Math.max(40, Math.floor(pts.length * 10));
-      const geom = new THREE.TubeGeometry(curve, tubularSegments, 0.12, 8, false);
-      const mat  = new THREE.MeshStandardMaterial({ color: 0x00c882, metalness:0, roughness:.6 });
-      mat.emissive = new (_ARK.inScene.THREE.Color)(0x00c882);
-      mat.emissiveIntensity = 0.35;
-      const mesh = new (_ARK.inScene.THREE.Mesh)(geom, mat);
-      mesh.name = 'ARK_ROUTE_MESH';
-      return mesh;
+      const T=_ARK.inScene.THREE; if(!T||!poly||poly.length<2)return null;
+      const pts=poly.map(([x,y])=>new T.Vector3(x,floorY,y));
+      const curve=new T.CatmullRomCurve3(pts,false,'catmullrom',0.02);
+      const geom=new T.TubeGeometry(curve,Math.max(40,pts.length*10),0.12,8,false);
+      const mat=new T.MeshStandardMaterial({color:0x00c882,roughness:0.6,metalness:0});
+      mat.emissive=new T.Color(0x00c882); mat.emissiveIntensity=0.35;
+      return new T.Mesh(geom,mat);
     }
-    _ARK.addRouteInScene = (poly) => {
-      if (!_ARK.inScene.available || !_ARK.inScene.scene) return false;
-      if (_ARK.inScene.routeMesh){
-        _ARK.inScene.scene.remove(_ARK.inScene.routeMesh);
-        _ARK.inScene.routeMesh.geometry.dispose();
-        _ARK.inScene.routeMesh.material.dispose();
-        _ARK.inScene.routeMesh = null;
-      }
-      const mesh = routeMeshFromPolyline(poly, 0.10);
-      if (!mesh) return false;
-      _ARK.inScene.scene.add(mesh);
-      _ARK.inScene.routeMesh = mesh;
-      return true;
-    };
-    _ARK.clearRouteInScene = () => {
-      if (_ARK.inScene.routeMesh && _ARK.inScene.scene){
-        _ARK.inScene.scene.remove(_ARK.inScene.routeMesh);
-        _ARK.inScene.routeMesh.geometry.dispose();
-        _ARK.inScene.routeMesh.material.dispose();
-        _ARK.inScene.routeMesh = null;
-      }
-    };
-
     function renderRoute(poly){
-      if (!_ARK.addRouteInScene(poly)){
-        drawRoute(poly);
-      } else {
-        clearCanvas();
+      if(_ARK.inScene.available){
+        if(_ARK.inScene.routeMesh){_ARK.inScene.scene.remove(_ARK.inScene.routeMesh);}
+        const mesh=routeMeshFromPolyline(poly,0.1);
+        if(mesh){_ARK.inScene.scene.add(mesh);_ARK.inScene.routeMesh=mesh; clearCanvas(); return;}
       }
+      drawRoute(poly); // fallback
     }
     function resetRoute(){
-      _ARK.clearRouteInScene();
-      clearCanvas();
-      window._lastRoute = null;
+      if(_ARK.inScene.routeMesh&&_ARK.inScene.scene){_ARK.inScene.scene.remove(_ARK.inScene.routeMesh);}
+      _ARK.inScene.routeMesh=null; clearCanvas(); window._lastRoute=null;
     }
 
-    /**********************
-     * Routing flow (matches other file)
-     **********************/
+    let _sdk=null; let threat=null;
+
+    async function isGroundable(){
+      try{const rect=overlay.getBoundingClientRect();const hit=await _sdk.Renderer.getWorldPositionData({x:rect.width/2,y:rect.height/2});return !!(hit&&hit.normal&&hit.normal.y>0.7);}catch{return false;}
+    }
+
     async function routeSafeAuto(){
-      const ok = await isGroundableAtCenter();
-      if (!ok) {
-        pendingRouteWhenInside = true;
-        toast("Move inside to compute safest route");
-        info("Deferred: move inside to compute route");
-        return;
-      }
-      if (!threat) { toast("Place a threat pin first."); return; }
-
-      // Camera start (x,z) in meters
-      let cam = {x:0,y:0};
-      try {
-        const pos = await _sdk.Camera.getPosition();
-        cam = { x: pos.x, y: pos.z };
-      } catch {}
-
-      const mode = (document.getElementById("modeSelect")?.value || "auto").toLowerCase();
-
-      info("Routing...");
-      try{
-        let res;
-        if (mode === "auto") {
-          res = await fetch(`${BACKEND_URL}/route/auto`, {
-            method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ start:cam, threat })
-          });
-        } else {
-          res = await fetch(`${BACKEND_URL}/route_safe`, {
-            method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ start:cam, threat, prefer: mode === "evac" ? "exit" : "shelter" })
-          });
-        }
-        if(!res.ok){
-          const txt = await res.text();
-          throw new Error(`Route error ${res.status}: ${txt}`);
-        }
-        const out = await res.json();
-
-        // Fit bbox for overlay mapping (used for fallback and labels)
-        if (!SITE_BBOX && out.route?.length >= 2) {
-          const xs = out.route.map(p=>p[0]);
-          const ys = out.route.map(p=>p[1]);
-          SITE_BBOX = { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
-          fitFromBBox();
-        }
-
-        window._lastRoute = out.route;
-        const decision = out.mode_selected || out.decision || "—";
-        stats.textContent = `Length: ${out.length_m?.toFixed(1)} m · ${decision}`;
-        renderRoute(out.route);
-      }catch(e){
-        console.error(e);
-        toast(e.message || "Route failed");
-      }
+      if(!await isGroundable()){toast("Move inside first");return;}
+      if(!threat){toast("Place a threat");return;}
+      const pos=await _sdk.Camera.getPosition(); const cam={x:pos.x,y:pos.z};
+      const mode=(document.getElementById("modeSelect")?.value||"auto").toLowerCase();
+      let res=await fetch(`${BACKEND_URL}/route/${mode==="auto"?"auto":"safe"}`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(mode==="auto"?{start:cam,threat}:{start:cam,threat,prefer:mode==="evac"?"exit":"shelter"})
+      });
+      if(!res.ok) return toast("Route error");
+      const out=await res.json();
+      window._lastRoute=out.route; stats.textContent=`Length: ${out.length_m?.toFixed(1)} m · ${out.mode_selected||out.decision}`;
+      renderRoute(out.route);
     }
 
     function enableThreatPlacement(){
-      toast("Click on the scene to place threat");
-      window.addEventListener('click', onClickOnce, { once:true });
+      toast("Click in scene to place threat");
+      window.addEventListener('click', onClickOnce,{once:true});
       async function onClickOnce(ev){
-        try{
-          const x = ev.clientX, y = ev.clientY;
-          const hit = await _sdk.Renderer.getWorldPositionData({x, y});
-          if (hit && hit.position){
-            if (hit.normal && hit.normal.y > 0.4){
-              threat = { x: hit.position.x, y: hit.position.z };
-              toast(`Threat placed at (${threat.x.toFixed(2)}, ${threat.y.toFixed(2)})`);
-              routeSafeAuto();
-            } else {
-              toast("Not a floor hit; try again inside.");
-            }
-          }
-        }catch(e){
-          toast("Could not place threat here");
-        }
+        const hit=await _sdk.Renderer.getWorldPositionData({x:ev.clientX,y:ev.clientY});
+        if(hit?.position&&hit.normal?.y>0.4){threat={x:hit.position.x,y:hit.position.z};toast("Threat placed");routeSafeAuto();}
+        else toast("Not a floor hit");
       }
     }
-
     document.getElementById('btnPlaceThreat').addEventListener('click', enableThreatPlacement);
     document.getElementById('btnReset').addEventListener('click', resetRoute);
 
-    (async function boot(){
-      // Keep overlay sized to the stage (prevents drift)
-      function syncOverlayRect(){
-        const stage = document.getElementById('stage');
-        overlay.style.left = stage.style.left;
-        overlay.style.top = stage.style.top;
-        overlay.style.width = stage.clientWidth + 'px';
-        overlay.style.height= stage.clientHeight + 'px';
-        overlay.width  = stage.clientWidth;
-        overlay.height = stage.clientHeight;
-      }
-      syncOverlayRect();
-      window.addEventListener('resize', syncOverlayRect);
+    // Boot: listen for mpSdkPlaying
+    const el=document.getElementById('mp');
+    el.addEventListener('mpSdkPlaying', async (e)=>{
+      _sdk=e.detail.mpSdk; info("SDK connected (WebComponent)");
+      _sdk.Scene.register('arkRoute',class{onInit(ctx){_ARK.inScene.available=true;_ARK.inScene.scene=ctx.scene;_ARK.inScene.THREE=ctx.THREE;console.log("[ARK] In-scene enabled");}});
+      await _sdk.Scene.add('arkRoute');
+    },{once:true});
 
-      _sdk = await getSdk();
-      if (!_sdk){ info('SDK not connected'); return; }
-      info('SDK connected');
-
-      // Overlay re-draw on camera pose (fallback keeps “glued”)
-      try {
-        _sdk.Camera.pose.subscribe(()=>{ if (window._lastRoute) drawRoute(window._lastRoute); });
-      } catch {}
-
-      // Try to expose in-scene render context (auto-on if available)
-      try{
-        if (_sdk.Renderer && typeof _sdk.Renderer.getRenderContext === 'function'){
-          const ctx = await _sdk.Renderer.getRenderContext();
-          if (ctx && ctx.scene){
-            _ARK.inScene.available = true;
-            _ARK.inScene.scene = ctx.scene;
-            _ARK.inScene.THREE = ctx.THREE || window.THREE || (window.top && window.top.THREE);
-            console.log('[ARK] In-scene route enabled');
-          }
-        }
-      }catch(e){
-        console.warn('[ARK] No renderContext; overlay fallback in use.');
-      }
-
-      // If user queued routing while outside, auto-run once inside
-      try {
-        _sdk.Camera.pose.subscribe(async ()=>{
-          if (pendingRouteWhenInside){
-            const ok = await isGroundableAtCenter();
-            if (ok){
-              pendingRouteWhenInside = false;
-              routeSafeAuto();
-            }
-          }
-        });
-      } catch {}
-    })();
-
-    resize();
+    sizeOverlay();
   </script>
-  <!-- Matterport SDK loader -->
-  <script src="https://static.matterport.com/showcase-sdk/latest.js"></script>
 </body>
 </html>
