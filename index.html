@@ -118,16 +118,40 @@
     function resetRoute(){
       if(_ARK.inScene.routeMesh&&_ARK.inScene.scene){_ARK.inScene.scene.remove(_ARK.inScene.routeMesh);}
       _ARK.inScene.routeMesh=null; clearCanvas(); window._lastRoute=null;
+      // Clear pending state too
+      threat=null; pendingRoute=false;
+      stats.textContent = 'Ready';
     }
 
-    let _sdk=null; let threat=null;
-    async function isGroundable(){
-      try{const rect=overlay.getBoundingClientRect();const hit=await _sdk.Renderer.getWorldPositionData({x:rect.width/2,y:rect.height/2});return !!(hit&&hit.normal&&hit.normal.y>0.7);}catch{return false;}
+    let _sdk=null; 
+    let threat=null;
+    let pendingRoute=false;     // <-- route only after viewer is set inside
+    let unsubPointer=null;
+
+    async function ensureInside(){
+      try{
+        await _sdk.Mode.set({ 
+          mode: _sdk.Mode.Mode.inside, 
+          transition: _sdk.Mode.TransitionType.instant 
+        });
+      }catch(_){}
     }
+
+    async function isGroundable(){
+      try{
+        const rect=overlay.getBoundingClientRect();
+        const hit=await _sdk.Renderer.getWorldPositionData({x:rect.width/2,y:rect.height/2});
+        return !!(hit&&hit.normal&&hit.normal.y>0.7);
+      }catch{
+        return false;
+      }
+    }
+
     async function routeSafeAuto(){
-      if(!await isGroundable()){toast("Move inside first");return;}
-      if(!threat){toast("Place a threat");return;}
-      const pos=await _sdk.Camera.getPosition(); const cam={x:pos.x,y:pos.z};
+      if(!await isGroundable()){ toast("Move inside first"); return; }
+      if(!threat){ toast("Place a threat"); return; }
+      const pos=await _sdk.Camera.getPosition();
+      const cam={x:pos.x,y:pos.z};
       const mode=(document.getElementById("modeSelect")?.value||"auto").toLowerCase();
       const url = mode==="auto" ? `${BACKEND_URL}/route/auto` : `${BACKEND_URL}/route_safe`;
       const body= mode==="auto" ? {start:cam,threat} : {start:cam,threat,prefer:mode==="evac"?"exit":"shelter"};
@@ -138,15 +162,46 @@
       stats.textContent=`Length: ${out.length_m?.toFixed(1)} m · ${out.mode_selected||out.decision||"—"}`;
       renderRoute(out.route);
     }
-    function enableThreatPlacement(){
-      toast("Click in scene to place threat");
-      window.addEventListener('click', onClickOnce,{once:true});
-      async function onClickOnce(ev){
-        const hit=await _sdk.Renderer.getWorldPositionData({x:ev.clientX,y:ev.clientY});
-        if(hit?.position&&hit.normal?.y>0.4){threat={x:hit.position.x,y:hit.position.z};toast("Threat placed");routeSafeAuto();}
-        else toast("Not a floor hit");
-      }
+
+    function disarmPointer(){
+      if (unsubPointer){ unsubPointer(); unsubPointer=null; }
+      document.body.style.cursor='default';
     }
+    function armPointerOnce(){
+      document.body.style.cursor='crosshair';
+      unsubPointer = _sdk.Pointer.intersection.subscribe(async (ev)=>{
+        disarmPointer();
+        try{
+          const hit = await _sdk.Renderer.getWorldPositionData({ x: ev.clientX, y: ev.clientY });
+          if(hit?.position&&hit.normal?.y>0.4){
+            threat={x:hit.position.x,y:hit.position.z};
+            pendingRoute=true; // <-- defer routing until viewer is valid
+            toast("Threat placed. Routing will start once viewer is inside.");
+            // Try immediately in case we're already groundable
+            maybeTryRoute();
+          }else{
+            toast("Not a floor hit");
+          }
+        }catch(err){
+          toast("Placement failed");
+          console.warn('[ARK] placement error', err);
+        }
+      });
+    }
+
+    async function maybeTryRoute(){
+      if (!pendingRoute || !threat) return;
+      if (!await isGroundable()) return;
+      pendingRoute=false;
+      routeSafeAuto();
+    }
+
+    async function enableThreatPlacement(){
+      await ensureInside();               // <-- force inside before arming
+      toast("Click in scene to place threat");
+      armPointerOnce();                   // <-- WebComponent-safe one-shot pointer
+    }
+
     document.getElementById('btnPlaceThreat').addEventListener('click', enableThreatPlacement);
     document.getElementById('btnReset').addEventListener('click', resetRoute);
 
@@ -176,12 +231,20 @@
           _ARK.inScene.available=false;
         }
 
-        // Keep overlay “glued” when we’re using it
-        try{ _sdk.Camera.pose.subscribe(()=>{ if (window._lastRoute) drawRoute(window._lastRoute); }); }catch{}
+        // Keep overlay “glued” + opportunistically attempt routing when pose updates
+        try{ 
+          _sdk.Camera.pose.subscribe(async ()=>{
+            if (window._lastRoute && !_ARK.inScene.available) drawRoute(window._lastRoute);
+            // If a threat was placed earlier, auto-run once viewer is inside
+            maybeTryRoute();
+          }); 
+        }catch{}
       },{once:true});
     });
 
     sizeOverlay();
+    // Optional: keep overlay sized; harmless if omitted
+    window.addEventListener('resize', sizeOverlay);
   </script>
 </body>
 </html>
