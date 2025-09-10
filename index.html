@@ -256,11 +256,15 @@
     // -------------------- SDK bootstrap --------------------
     customElements.whenDefined('matterport-viewer').then(()=>{
       const el=document.getElementById('mp');
-      el.addEventListener('mpSdkPlaying', async (e)=>{
+
+      // Manual one-shot handler (no { once:true })
+      const onMpSdkPlaying = async (e) => {
+        el.removeEventListener('mpSdkPlaying', onMpSdkPlaying); // one-shot
+
         _sdk=e.detail.mpSdk; 
         info("SDK connected (WebComponent)");
 
-        // One-time assert: log Scene keys so you can confirm exposure
+        // One-time assert: log Scene keys
         try {
           const sceneKeys = Object.keys(_sdk.Scene || {});
           console.log('[ARK] Scene keys:', sceneKeys);
@@ -268,55 +272,47 @@
           console.warn('[ARK] Could not log Scene keys', err);
         }
 
-        // One-time assert
-try {
-  const sceneKeys = Object.keys(_sdk.Scene || {});
-  console.log('[ARK] Scene keys:', sceneKeys);
-} catch (err) {
-  console.warn('[ARK] Could not log Scene keys', err);
-}
+        const S = _sdk.Scene;
+        if (S && typeof S.registerComponents === 'function' && typeof S.createNodes === 'function') {
+          class ArkRoute {
+            onInit(ctx){
+              const T = ctx.THREE || ctx.three;
+              this.outputs = this.outputs || {};
+              const root = new T.Group();
+              this.outputs.objectRoot = root;
 
-const S = _sdk.Scene;
-if (S && typeof S.registerComponents === 'function' && typeof S.createNodes === 'function') {
-  class ArkRoute {
-    onInit(ctx){
-      const T = ctx.THREE || ctx.three;
-      this.outputs = this.outputs || {};
-      const root = new T.Group();
-      this.outputs.objectRoot = root;
+              try { console.log('[ARK] THREE revision:', T && T.REVISION); } catch {}
 
-      try { console.log('[ARK] THREE revision:', T && T.REVISION); } catch {}
+              _ARK.inScene.available = true;
+              _ARK.inScene.THREE = T;
+              _ARK.inScene.root = root;
 
-      _ARK.inScene.available = true;
-      _ARK.inScene.THREE = T;
-      _ARK.inScene.root = root;
+              console.log("[ARK] In-scene route root created");
+            }
+            onTick() {}
+            onDestroy() {
+              _ARK.inScene.available = false;
+              _ARK.inScene.root = null;
+              _ARK.inScene.THREE = null;
+              _ARK.inScene.routeMesh = null;
+            }
+          }
 
-      console.log("[ARK] In-scene route root created");
-    }
-    onTick() {}
-    onDestroy() {
-      _ARK.inScene.available = false;
-      _ARK.inScene.root = null;
-      _ARK.inScene.THREE = null;
-      _ARK.inScene.routeMesh = null;
-    }
-  }
+          // Correct registration shape
+          S.registerComponents([
+            { name: 'arkRoute', factory: () => new ArkRoute() }
+          ]);
 
-  // ✅ correct registration shape
-  S.registerComponents([
-    { name: 'arkRoute', factory: () => new ArkRoute() }
-  ]);
+          // Create node with explicit empty props/inputs
+          const { nodes } = await S.createNodes([
+            { components: [ { name: 'arkRoute', props: {}, inputs: {} } ] }
+          ]);
 
-  // ✅ create node with explicit empty props/inputs
-  const { nodes } = await S.createNodes([
-    { components: [ { name: 'arkRoute', props: {}, inputs: {} } ] }
-  ]);
-
-  await nodes[0].start();
-} else {
-  console.warn('[ARK] Scene API not available; overlay fallback in use.');
-  _ARK.inScene.available = false;
-}
+          await nodes[0].start();
+        } else {
+          console.warn('[ARK] Scene API not available; overlay fallback in use.');
+          _ARK.inScene.available=false;
+        }
 
         // Overlay glue + opportunistic routing when pose stabilizes
         try{ 
@@ -325,7 +321,9 @@ if (S && typeof S.registerComponents === 'function' && typeof S.createNodes === 
             maybeTryRoute();
           }); 
         }catch{}
-      },{once:true});
+      };
+
+      el.addEventListener('mpSdkPlaying', onMpSdkPlaying); // attach without options
     });
 
     sizeOverlay();
