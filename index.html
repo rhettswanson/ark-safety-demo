@@ -296,7 +296,7 @@
           }
           S.register('arkRoute', () => new ArkRoute());
           const node = await S.createNode();
-          node.addComponent('arkRoute', {}, {});   <!-- props, inputs -->
+          node.addComponent('arkRoute', {}, {});   // props, inputs
           await node.start();
         } else {
           console.warn('[ARK] Scene API not available; overlay fallback in use.');
