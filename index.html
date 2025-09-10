@@ -20,7 +20,7 @@
     #toast.show{opacity:1; transform:translateY(0)}
   </style>
 
-  <!-- ✅ This imports the Matterport webcomponent -->
+  <!-- Load the Matterport WebComponent (CDN). It will fetch static assets from asset-base="bundle". -->
   <script type="module">
     import 'https://unpkg.com/@matterport/webcomponent?module';
   </script>
@@ -44,12 +44,17 @@
   </div>
 
   <div id="stage">
-    <!-- WebComponent (short form with attributes) -->
+    <!-- ✅ Use attribute form + asset-base so CSS/fonts load from /ark-safety-demo/bundle/... -->
     <matterport-viewer
-  id="mp"
-  style="width:100%;height:100%;border:0;display:block"
-  src="bundle/dist/showcase.html?m=1ghABoaBFPZ&applicationKey=akqd0dp3hr9wz4eu70zd1rsab&qs=1&play=1">
-</matterport-viewer>
+      id="mp"
+      style="width:100%;height:100%;border:0;display:block"
+      m="1ghABoaBFPZ"
+      application-key="akqd0dp3hr9wz4eu70zd1rsab"
+      asset-base="bundle"
+      autoplay
+      qs
+      play>
+    </matterport-viewer>
   </div>
 
   <!-- Overlay canvas (labels + fallback) -->
@@ -57,7 +62,12 @@
   <div id="toast"></div>
 
   <script type="module">
-    const BACKEND_URL = "https://bed-drums-vermont-dodge.trycloudflare.com";
+    // Tunnel in prod; localhost when running file server locally
+    const BACKEND_URL = (() => {
+      return location.hostname.endsWith('github.io')
+        ? 'https://palmer-homeland-wants-hook.trycloudflare.com'
+        : 'http://localhost:7860';
+    })();
 
     const stats = document.getElementById('stats');
     const toastEl = document.getElementById('toast');
@@ -77,10 +87,13 @@
     function drawRoute(route){
       clearCanvas(); if (!route||route.length<2) return;
       ctx.lineJoin="round"; ctx.lineCap="round";
+      // glow
       ctx.lineWidth=14; ctx.strokeStyle="rgba(0,200,130,0.25)";
-      ctx.beginPath(); route.forEach(([x,y],i)=>{const [px,py]=[overlay.width/2+x*10,overlay.height/2-y*10]; if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py);}); ctx.stroke();
+      ctx.beginPath(); route.forEach(([x,y],i)=>{const [px,py]=[overlay.width/2+x*10,overlay.height/2-y*10]; i?ctx.lineTo(px,py):ctx.moveTo(px,py);}); ctx.stroke();
+      // core animated path
       ctx.setLineDash([18,10]); ctx.lineDashOffset=-(performance.now()*0.05);
-      ctx.lineWidth=7; ctx.strokeStyle="#00C882"; ctx.beginPath(); route.forEach(([x,y],i)=>{const [px,py]=[overlay.width/2+x*10,overlay.height/2-y*10]; if(i===0)ctx.moveTo(px,py); else ctx.lineTo(px,py);}); ctx.stroke(); ctx.setLineDash([]);
+      ctx.lineWidth=7; ctx.strokeStyle="#00C882";
+      ctx.beginPath(); route.forEach(([x,y],i)=>{const [px,py]=[overlay.width/2+x*10,overlay.height/2-y*10]; i?ctx.lineTo(px,py):ctx.moveTo(px,py);}); ctx.stroke(); ctx.setLineDash([]);
     }
 
     // In-scene helpers
@@ -116,13 +129,13 @@
       if(!threat){toast("Place a threat");return;}
       const pos=await _sdk.Camera.getPosition(); const cam={x:pos.x,y:pos.z};
       const mode=(document.getElementById("modeSelect")?.value||"auto").toLowerCase();
-      let res=await fetch(`${BACKEND_URL}/route/${mode==="auto"?"auto":"safe"}`,{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify(mode==="auto"?{start:cam,threat}:{start:cam,threat,prefer:mode==="evac"?"exit":"shelter"})
-      });
-      if(!res.ok) return toast("Route error");
+      const url = mode==="auto" ? `${BACKEND_URL}/route/auto` : `${BACKEND_URL}/route_safe`;
+      const body= mode==="auto" ? {start:cam,threat} : {start:cam,threat,prefer:mode==="evac"?"exit":"shelter"};
+      const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      if(!res.ok){ toast(`Route error ${res.status}`); return; }
       const out=await res.json();
-      window._lastRoute=out.route; stats.textContent=`Length: ${out.length_m?.toFixed(1)} m · ${out.mode_selected||out.decision}`;
+      window._lastRoute=out.route;
+      stats.textContent=`Length: ${out.length_m?.toFixed(1)} m · ${out.mode_selected||out.decision||"—"}`;
       renderRoute(out.route);
     }
     function enableThreatPlacement(){
@@ -142,8 +155,29 @@
       const el=document.getElementById('mp');
       el.addEventListener('mpSdkPlaying', async (e)=>{
         _sdk=e.detail.mpSdk; info("SDK connected (WebComponent)");
-        _sdk.Scene.register('arkRoute',class{onInit(ctx){_ARK.inScene.available=true;_ARK.inScene.scene=ctx.scene;_ARK.inScene.THREE=ctx.THREE;console.log("[ARK] In-scene enabled");}});
-        await _sdk.Scene.create('arkRoute');
+
+        // ✅ Guard: only use Scene API if this build exposes it
+        const S = _sdk.Scene;
+        if (S && typeof S.register === 'function' && typeof S.create === 'function') {
+          class ArkRoute {
+            onInit(ctx){
+              _ARK.inScene.available=true;
+              _ARK.inScene.scene=ctx.scene;
+              _ARK.inScene.THREE=ctx.THREE;
+              console.log("[ARK] In-scene enabled via IComponentContext");
+            }
+            onTick() {}
+            onDestroy() {}
+          }
+          S.register('arkRoute', ArkRoute);
+          await S.create('arkRoute');
+        } else {
+          console.warn('[ARK] Scene API not available; overlay fallback in use.');
+          _ARK.inScene.available=false;
+        }
+
+        // Keep overlay “glued” when we’re using it
+        try{ _sdk.Camera.pose.subscribe(()=>{ if (window._lastRoute) drawRoute(window._lastRoute); }); }catch{}
       },{once:true});
     });
 
