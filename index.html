@@ -9,9 +9,18 @@
 <script type="importmap">
 {
   "imports": {
+    /* bare name (just in case any subgraph uses it) */
     "three": "./three-shim.js",
+
+    /* ABSOLUTE URL forms actually seen in your Network → Initiator chain */
+    "https://unpkg.com/three@%5E0.176.0?module": "./three-shim.js",
+    "https://unpkg.com/three@^0.176.0?module": "./three-shim.js",
+    "https://unpkg.com/three@0.176.0?module": "./three-shim.js",
+
+    /* Map the module entry directly too */
     "https://unpkg.com/three@0.176.0/build/three.module.js?module": "./three-shim.js",
     "https://unpkg.com/three@0.176.0/build/three.module.js": "./three-shim.js"
+
   }
 }
 </script>
