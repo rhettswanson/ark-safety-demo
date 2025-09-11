@@ -63,6 +63,10 @@
 
   <script type="module">
     import * as THREE from "three";
+    // Fat-line renderer (examples). These modules import 'three' (uses our import map).
+    import { Line2 }          from "https://unpkg.com/three@0.176.0/examples/jsm/lines/Line2.js?module";
+    import { LineMaterial }   from "https://unpkg.com/three@0.176.0/examples/jsm/lines/LineMaterial.js?module";
+    import { LineGeometry }   from "https://unpkg.com/three@0.176.0/examples/jsm/lines/LineGeometry.js?module";
 
     // ------------ Backend resolution (Cloudflare tunnel first)
     const params = new URLSearchParams(window.location.search);
@@ -94,7 +98,7 @@
     };
 
     // --------- Coordinate helpers (Matterport world → nav XY, and back)
-    const ROUTE_Y = 0.06; // 6 cm above floor to avoid z-fighting
+    const ROUTE_Y = 0.10; // 10 cm above floor for visibility
 
     const worldToNav = (p) => ({ x: p.x, y: p.z });                 // floor plane: use XZ
     const navToWorld = (p) => new THREE.Vector3(p.x, ROUTE_Y, p.y); // lift off floor
@@ -110,47 +114,61 @@
       return navToWorld(p);
     };
 
-    // --------- Minimal 3D line renderer (dashed)
+    // --------- Fat 3D line renderer (super visible)
     function renderRoute3D(points) {
       if (!_ARK.inScene.available) throw new Error("In-scene not available; cannot render 3D route");
 
-      const T = _ARK.inScene.THREE;
       const root = _ARK.inScene.root;
 
+      // clear old route
       if (_ARK.inScene.routeMesh) {
+        if (_ARK.inScene.routeMesh.geometry) _ARK.inScene.routeMesh.geometry.dispose?.();
+        if (_ARK.inScene.routeMesh.material) _ARK.inScene.routeMesh.material.dispose?.();
         root.remove(_ARK.inScene.routeMesh);
         _ARK.inScene.routeMesh = null;
       }
 
       if (!Array.isArray(points) || points.length < 2) throw new Error("renderRoute3D: invalid points");
 
-      const verts = [];
+      const positions = [];
       for (const p of points) {
         const v = anyPointToWorld(p);
-        verts.push(v.x, v.y, v.z);
+        positions.push(v.x, v.y, v.z);
       }
 
-      const geo = new T.BufferGeometry();
-      geo.setAttribute('position', new T.Float32BufferAttribute(verts, 3));
+      const geo = new LineGeometry();
+      geo.setPositions(positions);
 
-      const mat = new T.LineDashedMaterial({
-        color: 0x21d38c,
-        dashSize: 0.5,
-        gapSize: 0.3,
-        depthTest: false,   // draw on top so it never disappears in the floor
+      const mat = new LineMaterial({
+        color: 0x22ff88,       // bright neon green
+        linewidth: 0.01,       // thick! (screen-space, with resolution set below)
+        dashed: false,
+        depthTest: false,      // draw on top of floor/furniture
         transparent: false
       });
+      mat.resolution.set(window.innerWidth, window.innerHeight);
 
-      const line = new T.Line(geo, mat);
+      const line = new Line2(geo, mat);
       line.computeLineDistances();
 
       root.add(line);
       _ARK.inScene.routeMesh = line;
+
+      // keep width correct on resize
+      const onResize = () => {
+        if (_ARK.inScene.routeMesh?.material?.resolution) {
+          _ARK.inScene.routeMesh.material.resolution.set(window.innerWidth, window.innerHeight);
+        }
+      };
+      window.removeEventListener('resize', onResize);
+      window.addEventListener('resize', onResize);
     }
 
     // ------------ Buttons
     document.getElementById('btnReset').addEventListener('click', () => {
       if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
+        if (_ARK.inScene.routeMesh.geometry) _ARK.inScene.routeMesh.geometry.dispose?.();
+        if (_ARK.inScene.routeMesh.material) _ARK.inScene.routeMesh.material.dispose?.();
         _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
         _ARK.inScene.routeMesh = null;
       }
@@ -182,7 +200,6 @@
           body: JSON.stringify({
             start:  { x: startNav.x,  y: startNav.y  },
             threat: { x: threatNav.x, y: threatNav.y },
-            // the backend ignores these if not used; safe to keep
             k: 3, dx: 1.5,
             weights: { alpha: 1.0, beta: 12.0, gamma: 2.0, delta: 0.0 }
           })
@@ -220,7 +237,8 @@
       if (S && typeof S.register==='function') {
         class ArkRoute {
           constructor() {
-            this.inputs  = { enabled: true }; // non-empty so SDK adds .onChanged
+            // non-empty so SDK adds .onChanged hooks internally
+            this.inputs  = { enabled: true };
             this.outputs = {};
             this.events  = {};
             this.emits   = {};
@@ -228,7 +246,7 @@
           onInit() {
             const T = THREE;
             const root = new T.Group();
-            this.outputs.objectRoot = root;
+            this.outputs.objectRoot = root;  // set AFTER SDK setup of outputs
 
             _ARK.inScene.available = true;
             _ARK.inScene.THREE = T;
@@ -240,6 +258,8 @@
           onDestroy() {
             _ARK.inScene.available = false;
             if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
+              if (_ARK.inScene.routeMesh.geometry) _ARK.inScene.routeMesh.geometry.dispose?.();
+              if (_ARK.inScene.routeMesh.material) _ARK.inScene.routeMesh.material.dispose?.();
               _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
             }
             _ARK.inScene.root = null;
