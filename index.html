@@ -50,7 +50,7 @@
 
   <script type="module">
     // ----------------------------
-    // Config
+    // Config / UI helpers
     // ----------------------------
     const BACKEND_URL = window.location.origin; // localhost or Cloudflare
     const hud = document.getElementById('hud');
@@ -61,6 +61,7 @@
     const overlay = document.getElementById('overlay');
     const ctx2d = overlay.getContext('2d');
     function sizeOverlay() {
+      // use client size to keep resolution in sync
       overlay.width = overlay.clientWidth;
       overlay.height = overlay.clientHeight;
       ctx2d.clearRect(0,0,overlay.width,overlay.height);
@@ -114,34 +115,63 @@
     (async () => {
       await customElements.whenDefined('matterport-viewer');
 
-      // ✅ Correct bootstrap: playingPromise resolves to mpSdk
-      const _sdk = await viewer.playingPromise;
+      // playingPromise resolves to mpSdk for the WebComponent
+      const mpSdk = await viewer.playingPromise;
       status("SDK connected (WebComponent)");
 
-      const S = _sdk.Scene;
-      if (S && typeof S.register==='function' && typeof S.createNode==='function') {
+      const S = mpSdk.Scene;
+      if (S && typeof S.register==='function') {
+
+        // >>> FIX: define inputs/outputs at construction time <<<
         class ArkRoute {
+          constructor() {
+            // must be normal objects before SDK wraps them
+            this.inputs = {};
+            this.outputs = {};
+            this.events = {};
+            this.emits = {};
+          }
           onInit(ctx) {
-            const T=ctx.THREE; const root=new T.Group();
-            this.outputs={ objectRoot: root };
-            _ARK.inScene.available=true;
-            _ARK.inScene.THREE=T;
-            _ARK.inScene.root=root;
+            const T = ctx.THREE;
+            const root = new T.Group();
+            // now we can populate outputs
+            this.outputs.objectRoot = root;
+
+            _ARK.inScene.available = true;
+            _ARK.inScene.THREE = T;
+            _ARK.inScene.root = root;
+
+            // (optional) You can create and attach a mesh here later for in-scene routes
+            // const geo = new T.BufferGeometry(); const mat = new T.LineDashedMaterial(...);
+            // const mesh = new T.Line(geo, mat); root.add(mesh); _ARK.inScene.routeMesh = mesh;
+
             say("In-scene component initialized");
           }
-          onTick(){}
-          onDestroy(){ _ARK.inScene.available=false; _ARK.inScene.root=null; _ARK.inScene.THREE=null; _ARK.inScene.routeMesh=null; }
+          onTick() {}
+          onDestroy() {
+            _ARK.inScene.available=false;
+            _ARK.inScene.root=null;
+            _ARK.inScene.THREE=null;
+            _ARK.inScene.routeMesh=null;
+          }
         }
-        await S.register('arkRoute', ()=>new ArkRoute());
-        const node=await S.createNode();
+
+        await S.register('arkRoute', () => new ArkRoute());
+
+        // create a node while it's initializing, add optional lights, then our component
+        const node = await S.createNode();
+        try { node.addComponent('mp.lights'); } catch {}
         node.addComponent('arkRoute', {});
         await node.start();
       } else {
         console.warn("[ARK] Scene API not available; overlay fallback.");
       }
 
+      // keep 2D overlay in sync if we’re not using in-scene rendering
       try {
-        _sdk.Camera.pose.subscribe(()=>{ if (_ARK.lastRoute && !_ARK.inScene.available) drawOverlayRoute(_ARK.lastRoute); });
+        mpSdk.Camera.pose.subscribe(() => {
+          if (_ARK.lastRoute && !_ARK.inScene.available) drawOverlayRoute(_ARK.lastRoute);
+        });
       } catch(err) {
         console.warn("[ARK] pose.subscribe failed", err);
       }
