@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ARK Safety Demo (WebComponent + Scene API)</title>
 
-  <!-- Import map kept for safety; we don't import 'three' directly -->
   <script type="importmap">
   {
     "imports": {
@@ -19,7 +18,6 @@
   }
   </script>
 
-  <!-- Matterport WebComponent (ESM) -->
   <script type="module" src="https://unpkg.com/@matterport/webcomponent@0.1.45/dist/matterport-viewer.esm.js?module"></script>
 
   <style>
@@ -31,9 +29,24 @@
     header button:hover { background:#243244; }
     header button:active { background:#1b2633; }
     header .spacer { flex: 1 1 auto; opacity:.6; font-size:.9rem; }
+
     .stage { position: relative; height: 100%; overflow: hidden; background: #000; }
     matterport-viewer { position: absolute; inset: 0; width: 100%; height: 100%; }
     .hud { position: absolute; left: 12px; bottom: 12px; background: rgba(9,12,17,.72); border: 1px solid rgba(64,86,110,.55); padding: .35rem .6rem; border-radius: .5rem; font-size: .85rem; user-select: none; }
+
+    /* Annotator panel */
+    .annot { position: absolute; top: 0; right: 0; width: 360px; height: 100%; background: rgba(15,20,27,.96); border-left: 1px solid #263447; display: none; flex-direction: column; }
+    .annot.show { display: flex; }
+    .annot .head { display:flex; align-items:center; gap:.5rem; padding:.6rem .8rem; border-bottom:1px solid #223042; }
+    .annot .head .title { font-weight:600; }
+    .annot .head input { flex:1 1 auto; background:#0f1520; color:#e8edf2; border:1px solid #2b3949; border-radius:.45rem; padding:.35rem .5rem; }
+    .annot .body { overflow:auto; padding:.6rem; display:flex; gap:.6rem; flex-direction:column; }
+    .annot .row { display:grid; grid-template-columns: 70px 1fr auto; gap:.4rem; align-items:center; padding:.35rem .4rem; border:1px solid #223042; border-radius:.5rem; background:#0d131c; }
+    .annot .row .type { width: 100%; }
+    .annot .row .lbl { width: 100%; }
+    .annot .row button { all:unset; background:#1f2a37; border:1px solid #2b3949; padding:.3rem .45rem; border-radius:.45rem; cursor:pointer; }
+    .annot .foot { margin-top:auto; padding:.6rem; border-top:1px solid #223042; display:flex; gap:.5rem; }
+    .pill { font-size:.8rem; opacity:.7; }
   </style>
 </head>
 
@@ -45,6 +58,7 @@
       <button id="btnCompute">Compute Route</button>
       <button id="btnReset">Reset</button>
       <span class="spacer" id="status">Loading…</span>
+      <button id="btnAnnotate">Annotate</button>
     </header>
 
     <div class="stage">
@@ -58,6 +72,20 @@
       </matterport-viewer>
 
       <div class="hud" id="hud">Idle</div>
+
+      <!-- Annotator Panel -->
+      <div id="annot" class="annot">
+        <div class="head">
+          <div class="title">Annotate Doors</div>
+          <input id="annotFilter" placeholder="filter by label/id" />
+        </div>
+        <div id="annotBody" class="body"></div>
+        <div class="foot">
+          <span class="pill">Tip: click “Show” to flash pin in scene</span>
+          <button id="annotSave">Save</button>
+          <button id="annotClose">Close</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -65,7 +93,7 @@
     // ------------ Backend resolution (Cloudflare tunnel first)
     const params = new URLSearchParams(window.location.search);
     const API_PARAM = params.get("api");
-    const HARD_WIRE = "https://assembly-paperbacks-eddie-combat.trycloudflare.com"; // your tunnel
+    const HARD_WIRE = "https://ta-link-insured-refused.trycloudflare.com";
     function resolveBackend() {
       if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
       if (HARD_WIRE) return HARD_WIRE.replace(/\/+$/,'');
@@ -75,7 +103,7 @@
       return `${protocol}//${hostname}`;
     }
     const BACKEND_URL = resolveBackend();
-    window.BACKEND_URL = BACKEND_URL; // for console debugging
+    window.BACKEND_URL = BACKEND_URL;
 
     // ------------ UI helpers
     const hud = document.getElementById('hud');
@@ -83,40 +111,28 @@
     const say = (m) => { hud.textContent = m; console.log('[ARK]', m); };
     const status = (m) => { statusEl.textContent = m; };
 
-    // In-scene state (always use the Scene renderer's THREE)
+    // In-scene state (use the Scene renderer's THREE)
     const _ARK = {
-      inScene: { available:false, THREE:null, root:null, routeMesh:null },
+      inScene: { available:false, THREE:null, root:null, routeMesh:null, pinsRoot:null },
       camera: null,
       threatWorld: null,
-      threatNav:   null
+      threatNav:   null,
+      meta: null,        // {doors, exits, shelters}
+      annot: []          // [{id,label,x,y,type, doorIndex}]
     };
 
     // --------- Coordinate helpers
     const ROUTE_Y = 0.10; // 10 cm above floor
+    const worldToNav = (p) => ({ x: p.x, y: p.z });
+    function v3(x,y,z) { const T = _ARK.inScene.THREE; return new T.Vector3(x,y,z); }
+    function navToWorld(p) { return v3(p.x, ROUTE_Y, p.y); }
 
-    const worldToNav = (p) => ({ x: p.x, y: p.z }); // floor plane uses XZ
-
-    function v3(x,y,z) {
-      const T = _ARK.inScene.THREE;
-      return new T.Vector3(x,y,z);
-    }
-    function anyPointToWorldT(p) {
-      if (Array.isArray(p)) {
-        return (p.length >= 3) ? v3(p[0], (p[1] ?? 0) + ROUTE_Y, p[2])
-                               : v3(p[0], ROUTE_Y, p[1]);
-      }
-      if ("z" in p)   return v3(p.x, (p.y ?? 0) + ROUTE_Y, p.z);
-      // nav {x,y}
-      return v3(p.x, ROUTE_Y, p.y);
-    }
-
-    // --------- Super-visible 3D route: TubeGeometry (neon green)
+    // --------- Route (Tube)
     function renderRoute3D(points) {
-      if (!_ARK.inScene.available) throw new Error("In-scene not available; cannot render 3D route");
+      if (!_ARK.inScene.available) throw new Error("In-scene not available");
       const T = _ARK.inScene.THREE;
       const root = _ARK.inScene.root;
 
-      // clear old
       if (_ARK.inScene.routeMesh) {
         _ARK.inScene.routeMesh.geometry?.dispose?.();
         _ARK.inScene.routeMesh.material?.dispose?.();
@@ -125,23 +141,154 @@
       }
       if (!Array.isArray(points) || points.length < 2) throw new Error("renderRoute3D: invalid points");
 
-      const pts = points.map(p => anyPointToWorldT(p));
+      const pts = points.map(p => navToWorld({x:p.x, y:p.y}));
       const curve = new T.CatmullRomCurve3(pts, false, "centripetal", 0.35);
       const tubularSegments = Math.max(100, pts.length * 20);
-      const radius = 0.06;          // 6 cm thick; bump to 0.10 if you want even thicker
-      const radialSegments = 12;
-
+      const radius = 0.06, radialSegments = 12;
       const geo = new T.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
-      const mat = new T.MeshBasicMaterial({
-        color: 0x22ff88,           // neon green
-        depthTest: false,          // draw on top
-        transparent: false
-      });
+      const mat = new T.MeshBasicMaterial({ color: 0x22ff88, depthTest: false, transparent: false });
       const mesh = new T.Mesh(geo, mat);
-
       root.add(mesh);
       _ARK.inScene.routeMesh = mesh;
     }
+
+    // --------- Door Pins for Annotator
+    function ensurePinsRoot() {
+      const T = _ARK.inScene.THREE;
+      if (!_ARK.inScene.pinsRoot) {
+        _ARK.inScene.pinsRoot = new T.Group();
+        _ARK.inScene.root.add(_ARK.inScene.pinsRoot);
+      }
+    }
+    function clearPins() {
+      const root = _ARK.inScene.pinsRoot;
+      if (!root) return;
+      while (root.children.length) {
+        const c = root.children.pop();
+        c.geometry?.dispose?.(); c.material?.dispose?.();
+      }
+    }
+    function colorForType(type) {
+      if (type === "exit")    return 0x2ee06e;  // green
+      if (type === "shelter") return 0x5ea7ff;  // blue
+      return 0xcccccc;                          // gray (unlabeled)
+    }
+    function buildPins() {
+      if (!_ARK.inScene.available || !_ARK.meta?.doors) return;
+      ensurePinsRoot(); clearPins();
+
+      const T = _ARK.inScene.THREE;
+      const root = _ARK.inScene.pinsRoot;
+
+      for (let i = 0; i < _ARK.annot.length; i++) {
+        const rec = _ARK.annot[i];
+        const mat = new T.MeshBasicMaterial({ color: colorForType(rec.type), depthTest:false });
+        const geo = new T.SphereGeometry(0.08, 16, 12);
+        const m = new T.Mesh(geo, mat);
+        m.position.copy(navToWorld({x:rec.x, y:rec.y}));
+        m.userData.recIndex = i;
+        root.add(m);
+      }
+    }
+    function flashPin(i) {
+      const root = _ARK.inScene.pinsRoot; if (!root) return;
+      const m = root.children.find(c => c.userData.recIndex === i);
+      if (!m) return;
+      const orig = m.material.color.getHex();
+      m.material.color.setHex(0xff3366);
+      setTimeout(() => m.material.color.setHex(orig), 900);
+    }
+    function updatePinColor(i) {
+      const root = _ARK.inScene.pinsRoot; if (!root) return;
+      const m = root.children.find(c => c.userData.recIndex === i);
+      if (m) m.material.color.setHex(colorForType(_ARK.annot[i].type));
+    }
+
+    // --------- Annotator UI
+    const annot = document.getElementById('annot');
+    const annotBody = document.getElementById('annotBody');
+    const annotFilter = document.getElementById('annotFilter');
+
+    function matchExistingLabel(x, y, list) {
+      const tol = 0.5; // meters
+      for (const r of list) {
+        const dx = r.x - x, dy = r.y - y;
+        if (Math.hypot(dx,dy) <= tol) return r;
+      }
+      return null;
+    }
+
+    async function openAnnotator() {
+      const meta = await (await fetch(`${BACKEND_URL}/site/meta`)).json();
+      _ARK.meta = meta;
+
+      _ARK.annot = meta.doors.map((d, idx) => {
+        const x = d.pos[0], y = d.pos[1];
+        const e = matchExistingLabel(x, y, meta.exits || []);
+        const s = matchExistingLabel(x, y, meta.shelters || []);
+        const type = e ? "exit" : s ? "shelter" : "";
+        const label = e?.label || s?.label || "";
+        const id = e?.id || s?.id || (`door-${idx}`);
+        return { id, label, x, y, type, doorIndex: idx };
+      });
+
+      renderAnnotList();
+      buildPins();
+
+      annot.classList.add('show');
+    }
+
+    function renderAnnotList() {
+      const q = (annotFilter.value || "").toLowerCase().trim();
+      annotBody.innerHTML = "";
+      _ARK.annot.forEach((rec, i) => {
+        if (q && !(rec.id.toLowerCase().includes(q) || rec.label.toLowerCase().includes(q))) return;
+
+        const row = document.createElement('div');
+        row.className = 'row';
+
+        const sel = document.createElement('select');
+        sel.className = 'type';
+        sel.innerHTML = `
+          <option value="">None</option>
+          <option value="exit">Exit</option>
+          <option value="shelter">Shelter</option>`;
+        sel.value = rec.type;
+        sel.onchange = () => { rec.type = sel.value; updatePinColor(i); };
+
+        const lab = document.createElement('input');
+        lab.className = 'lbl';
+        lab.placeholder = 'Label (e.g., Exit for Room 203)';
+        lab.value = rec.label || "";
+        lab.oninput = () => rec.label = lab.value;
+
+        const btn = document.createElement('button');
+        btn.textContent = 'Show';
+        btn.onclick = () => flashPin(i);
+
+        row.appendChild(sel);
+        row.appendChild(lab);
+        row.appendChild(btn);
+        annotBody.appendChild(row);
+      });
+    }
+
+    annotFilter.addEventListener('input', renderAnnotList);
+    document.getElementById('annotClose').onclick = () => annot.classList.remove('show');
+
+    document.getElementById('annotSave').onclick = async () => {
+      const exits    = _ARK.annot.filter(r => r.type === "exit").map(({id,label,x,y}) => ({id,label,x,y}));
+      const shelters = _ARK.annot.filter(r => r.type === "shelter").map(({id,label,x,y}) => ({id,label,x,y}));
+      const res = await fetch(`${BACKEND_URL}/admin/save_destinations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exits, shelters })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Save failed");
+      say(`Saved: ${data.exits} exits, ${data.shelters} shelters`);
+      annot.classList.remove('show');
+    };
 
     // ------------ Buttons
     document.getElementById('btnReset').addEventListener('click', () => {
@@ -203,9 +350,14 @@
       }
     });
 
+    // Annotate toggle
+    document.getElementById('btnAnnotate').onclick = () => {
+      if (!_ARK.inScene.available) { say("In-scene not available"); return; }
+      openAnnotator().catch(e => { console.error(e); say("Annotator failed"); });
+    };
+
     // ------------ Bootstrap
     const viewer = document.getElementById('mpv');
-
     (async () => {
       await customElements.whenDefined('matterport-viewer');
       const mpSdk = await viewer.playingPromise;
@@ -214,27 +366,15 @@
       const S = mpSdk.Scene;
       if (S && typeof S.register==='function') {
         class ArkRoute {
-          constructor() {
-            // non-empty so SDK adds .onChanged hooks internally
-            this.inputs  = { enabled: true };
-            this.outputs = {};
-            this.events  = {};
-            this.emits   = {};
-          }
+          constructor() { this.inputs = { enabled: true }; this.outputs = {}; this.events = {}; this.emits = {}; }
           onInit() {
-            // Scene loader calls onInit() with no args.
-            // Use the renderer's THREE from the instance, else fall back to window.THREE.
-            const T =
-              (this && this.THREE) ||
-              (typeof window !== "undefined" && window.THREE);
-
+            const T = (this && this.THREE) || (typeof window !== "undefined" && window.THREE);
             if (!T) throw new Error("THREE not available from Scene");
-
             const root = new T.Group();
             this.outputs.objectRoot = root;
 
             _ARK.inScene.available = true;
-            _ARK.inScene.THREE = T;   // use THIS THREE everywhere
+            _ARK.inScene.THREE = T;
             _ARK.inScene.root = root;
 
             say("In-scene component initialized");
@@ -247,6 +387,10 @@
               _ARK.inScene.routeMesh.material?.dispose?.();
               _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
             }
+            if (_ARK.inScene.pinsRoot && _ARK.inScene.root) {
+              _ARK.inScene.root.remove(_ARK.inScene.pinsRoot);
+              _ARK.inScene.pinsRoot = null;
+            }
             _ARK.inScene.root = null;
             _ARK.inScene.THREE = null;
             _ARK.inScene.routeMesh = null;
@@ -255,22 +399,15 @@
 
         await S.register("arkRoute", () => new ArkRoute());
         const node = await S.createNode();
-
-        // Optional: lights (safe; always pass {})
         try { node.addComponent("mp.lights", {}); } catch {}
-
         node.addComponent("arkRoute", {});
         await node.start();
       } else {
         throw new Error("Scene API not available");
       }
 
-      // Keep the latest camera pose
-      try {
-        mpSdk.Camera.pose.subscribe((p) => { _ARK.camera = p; });
-      } catch (err) {
-        console.warn("[ARK] pose.subscribe failed", err);
-      }
+      try { mpSdk.Camera.pose.subscribe((p) => { _ARK.camera = p; }); }
+      catch (err) { console.warn("[ARK] pose.subscribe failed", err); }
     })().catch(err => { console.error("[ARK] bootstrap failed:", err); throw err; });
   </script>
 </body>
