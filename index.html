@@ -110,7 +110,7 @@
     const params = new URLSearchParams(window.location.search);
     const API_PARAM = params.get("api");
     // Default to your Cloudflare tunnel (override anytime with ?api=...)
-    const HARD_WIRE = "https://assembly-paperbacks-eddie-combat.trycloudflare.com";
+    const HARD_WIRE = "https://ta-link-insured-refused.trycloudflare.com";
     function resolveBackend() {
       if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
       if (HARD_WIRE) return HARD_WIRE.replace(/\/+$/,'');
