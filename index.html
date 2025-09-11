@@ -5,14 +5,20 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ARK Safety Demo (WebComponent + Scene API)</title>
 
-  <!-- Import map: redirect "three" to our shim (must come BEFORE the Matterport script) -->
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "./three-shim.js"
-    }
+  <!-- Import map: must be before the Matterport script -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./three-shim.js",
+
+    "https://unpkg.com/three@0.176.0/build/three.core.js?module": "./three-shim.js",
+    "https://unpkg.com/three@0.176.0/build/three.core.js": "./three-shim.js",
+
+    "https://unpkg.com/three@0.176.0/build/three.module.js?module": "./three-shim.js",
+    "https://unpkg.com/three@0.176.0/build/three.module.js": "./three-shim.js"
   }
-  </script>
+}
+</script>
 
   <!-- Matterport WebComponent (ESM) -->
   <script type="module" src="https://unpkg.com/@matterport/webcomponent@0.1.45/dist/matterport-viewer.esm.js?module"></script>
