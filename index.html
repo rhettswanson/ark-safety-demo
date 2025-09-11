@@ -122,15 +122,22 @@
       // --- Scene bootstrap ---
 const S = mpSdk.Scene;
 if (S && typeof S.register === "function") {
+  // Helper that guarantees a plain, hasOwnProperty-capable object
+  const toPlain = (o) => {
+    if (!o || typeof o !== "object") return {};
+    // clone into a new object with Object.prototype (no null-proto)
+    return Object.assign({}, o);
+  };
+
   class ArkRoute {
     constructor() {
-      // Make sure these are plain objects with Object.prototype
-      this.inputs  = Object.create(Object.prototype);
-      this.outputs = Object.create(Object.prototype);
-      this.events  = Object.create(Object.prototype);
-      this.emits   = Object.create(Object.prototype);
+      // Start with plain objects so the wrapper is happy
+      this.inputs  = {};
+      this.outputs = {};
+      this.events  = {};
+      this.emits   = {};
 
-      // Predeclare the key we'll set in onInit
+      // Predeclare keys you’ll set later (optional, but safest)
       this.outputs.objectRoot = null;
     }
 
@@ -138,10 +145,10 @@ if (S && typeof S.register === "function") {
       const T = ctx.THREE;
       const root = new T.Group();
 
-      // IMPORTANT: property assignment, don't replace the outputs object
+      // IMPORTANT: set a property — do NOT replace the outputs object
       this.outputs.objectRoot = root;
 
-      // Clean, semicolon-terminated lines (avoid stray dots/underscores)
+      // Store a few handy refs for overlay/cleanup
       _ARK.inScene = _ARK.inScene || {};
       _ARK.inScene.available = true;
       _ARK.inScene.THREE = T;
@@ -160,15 +167,23 @@ if (S && typeof S.register === "function") {
     }
   }
 
-  await S.register("arkRoute", () => new ArkRoute());
+  // Register with a factory that normalizes bags BEFORE the SDK wraps them
+  await S.register("arkRoute", () => {
+    const c = new ArkRoute();
+    c.inputs  = toPlain(c.inputs);
+    c.outputs = toPlain(c.outputs);
+    c.events  = toPlain(c.events);
+    c.emits   = toPlain(c.emits);
+    return c;
+  });
 
-  // Create a node while it's initializing, add optional lights, then our component
+  // Create node, add components with explicit {} options, then start
   const node = await S.createNode();
 
-  // Either keep this (with {}) or comment it out entirely
+  // Keep or drop lights — but always pass {}
   try { node.addComponent("mp.lights", {}); } catch {}
 
-  node.addComponent("arkRoute", {});    // keep explicit {}
+  node.addComponent("arkRoute", {});  // explicit empty options is important
   await node.start();
 } else {
   console.warn("[ARK] Scene API not available; overlay fallback.");
