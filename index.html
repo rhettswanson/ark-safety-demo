@@ -63,10 +63,13 @@
   </div>
 
   <script type="module">
+    /* Import THREE directly via our shim so we don't rely on ctx.three */
+    import * as THREE from "three";
+
     // ----------------------------
     // Config / UI helpers
     // ----------------------------
-    const HARD_WIRE = "";
+    const HARD_WIRE = ""; // e.g., "https://your-tunnel.trycloudflare.com"
     const BACKEND_URL = HARD_WIRE || window.location.origin;
 
     const hud = document.getElementById('hud');
@@ -107,7 +110,6 @@
       }
       say("Reset");
     }
-
     document.getElementById('btnReset').addEventListener('click', resetRoute);
 
     // ----------------------------
@@ -139,13 +141,15 @@
           constructor() {
             // Non-empty inputs so SDK wraps and provides .onChanged
             this.inputs  = { enabled: true };
-            // Plain bags; do NOT predeclare reserved keys like objectRoot/collider
+            // Plain bags; DO NOT predeclare reserved keys like objectRoot/collider
             this.outputs = {};
             this.events  = {};
             this.emits   = {};
           }
-          onInit(ctx) {
-            const T = ctx.three;
+
+          // NOTE: SDK calls onInit() with NO arguments; use imported THREE
+          onInit() {
+            const T = THREE;
             const root = new T.Group();
 
             // Set reserved output only AFTER setupOutputs has run
@@ -153,12 +157,14 @@
 
             _ARK.inScene = _ARK.inScene || {};
             _ARK.inScene.available = true;
-            _ARK.inScene.THREE = T;
+            _ARK.inScene.THREE = T;  // store for later if needed
             _ARK.inScene.root = root;
 
             say("In-scene component initialized");
           }
+
           onTick() {}
+
           onDestroy() {
             _ARK.inScene.available = false;
             _ARK.inScene.root = null;
@@ -194,6 +200,7 @@
         console.warn("[ARK] Scene API not available; overlay fallback.");
       }
 
+      // Keep 2D overlay in sync if we’re not using in-scene rendering
       try {
         mpSdk.Camera.pose.subscribe(() => {
           if (_ARK.lastRoute && !_ARK.inScene.available) drawOverlayRoute(_ARK.lastRoute);
