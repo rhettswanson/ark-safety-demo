@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ARK Safety Demo (WebComponent + Scene API)</title>
 
+  <!-- Import map: redirect "three" to our shim (must come BEFORE the Matterport script) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./three-shim.js"
+    }
+  }
+  </script>
+
   <!-- Matterport WebComponent (ESM) -->
   <script type="module" src="https://unpkg.com/@matterport/webcomponent@0.1.45/dist/matterport-viewer.esm.js?module"></script>
 
@@ -52,8 +61,6 @@
     // ----------------------------
     // Config / UI helpers
     // ----------------------------
-    // Prefer same-origin so it works on localhost and Cloudflare tunnel.
-    // If you want to hard-wire your tunnel, set HARD_WIRE to your https URL.
     const HARD_WIRE = ""; // e.g., "https://your-tunnel.trycloudflare.com"
     const BACKEND_URL = HARD_WIRE || window.location.origin;
 
@@ -104,14 +111,11 @@
     document.getElementById('btnPlaceThreat').addEventListener('click', async () => {
       _ARK.threat = { placed:true };
       _ARK.lastRoute = { id:"demo" };
-
-      // Demo overlay until algorithm is re-enabled
       drawOverlayRoute(_ARK.lastRoute);
       say("Threat placed (demo)");
-
-      // Example POST once your backend endpoint is ready:
+      // Example POST:
       // await fetch(`${BACKEND_URL}/route/auto`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ /* ... */ }) })
-      //   .then(r => r.json()).then(data => { /* render in-scene */ });
+      //   .then(r => r.json()).then(data => { /* render 3D line later */ });
     });
 
     // ----------------------------
@@ -122,8 +126,6 @@
 
     (async () => {
       await customElements.whenDefined('matterport-viewer');
-
-      // playingPromise resolves to mpSdk for the WebComponent
       const mpSdk = await viewer.playingPromise;
       status("SDK connected (WebComponent)");
 
@@ -137,20 +139,16 @@
 
         class ArkRoute {
           constructor() {
-            // Start with plain objects
             this.inputs  = {};
             this.outputs = {};
             this.events  = {};
             this.emits   = {};
-            // Predeclare keys we set later
             this.outputs.objectRoot = null;
           }
           onInit(ctx) {
             const T = ctx.THREE;
             const root = new T.Group();
-
-            // Property assignment only (do not replace the outputs object)
-            this.outputs.objectRoot = root;
+            this.outputs.objectRoot = root; // property assign only
 
             _ARK.inScene = _ARK.inScene || {};
             _ARK.inScene.available = true;
@@ -181,10 +179,10 @@
         // Create node and attach our component safely
         const node = await S.createNode();
 
-        // Keep lights out while isolating (add back later as node.addComponent("mp.lights", {}))
+        // Keep lights commented until we confirm no crashes
         // try { node.addComponent("mp.lights", {}); } catch {}
 
-        // Build a guaranteed-plain options object and guard it
+        // Guaranteed-plain options object (and guard)
         const arkOpts = toPlain({});
         console.log("[ARK] addComponent about to run. typeof arkOpts:", typeof arkOpts,
                     "proto is Object.prototype:", Object.getPrototypeOf(arkOpts) === Object.prototype);
