@@ -52,7 +52,7 @@
     // ----------------------------
     // Config / UI helpers
     // ----------------------------
-    const BACKEND_URL = window.location.origin; // localhost or Cloudflare
+    const BACKEND_URL = https://om-antibodies-males-owen.trycloudflare.com; // localhost or Cloudflare
     const hud = document.getElementById('hud');
     const statusEl = document.getElementById('status');
     const say = (msg) => { hud.textContent = msg; console.log('[ARK]', msg); };
@@ -125,17 +125,17 @@
         // >>> FIX: define inputs/outputs at construction time <<<
         class ArkRoute {
           constructor() {
-            // must be normal objects before SDK wraps them
-            this.inputs = {};
-            this.outputs = {};
-            this.events = {};
-            this.emits = {};
-          }
-          onInit(ctx) {
-            const T = ctx.THREE;
-            const root = new T.Group();
-            // now we can populate outputs
-            this.outputs.objectRoot = root;
+  this.inputs  = Object.create(Object.prototype);
+  this.outputs = Object.create(Object.prototype);
+  this.events  = Object.create(Object.prototype);
+  this.emits   = Object.create(Object.prototype);
+  this.outputs.objectRoot = null;
+}
+onInit(ctx) {
+  const T = ctx.THREE;
+  const root = new T.Group();
+  this.outputs.objectRoot = root; // set a property, do NOT reassign this.outputs
+}
 
             _ARK.inScene.available = true;
             _ARK.inScene.THREE = T;
@@ -160,7 +160,7 @@
 
         // create a node while it's initializing, add optional lights, then our component
         const node = await S.createNode();
-        try { node.addComponent('mp.lights'); } catch {}
+        try { node.addComponent('mp.lights', {}); } catch {}
         node.addComponent('arkRoute', {});
         await node.start();
       } else {
