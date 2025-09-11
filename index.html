@@ -5,18 +5,20 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ARK Safety Demo (WebComponent + Scene API)</title>
 
+  <!-- Import map: remap all three module URL forms to our shim.
+       Must appear BEFORE the Matterport script. -->
   <script type="importmap">
-{
-  "imports": {
-    "three": "./three-shim.js",
-    "https://unpkg.com/three@%5E0.176.0?module": "./three-shim.js",
-    "https://unpkg.com/three@^0.176.0?module": "./three-shim.js",
-    "https://unpkg.com/three@0.176.0?module": "./three-shim.js",
-    "https://unpkg.com/three@0.176.0/build/three.module.js?module": "./three-shim.js",
-    "https://unpkg.com/three@0.176.0/build/three.module.js": "./three-shim.js"
+  {
+    "imports": {
+      "three": "./three-shim.js",
+      "https://unpkg.com/three@%5E0.176.0?module": "./three-shim.js",
+      "https://unpkg.com/three@^0.176.0?module": "./three-shim.js",
+      "https://unpkg.com/three@0.176.0?module": "./three-shim.js",
+      "https://unpkg.com/three@0.176.0/build/three.module.js?module": "./three-shim.js",
+      "https://unpkg.com/three@0.176.0/build/three.module.js": "./three-shim.js"
+    }
   }
-}
-</script>
+  </script>
 
   <!-- Matterport WebComponent (ESM) -->
   <script type="module" src="https://unpkg.com/@matterport/webcomponent@0.1.45/dist/matterport-viewer.esm.js?module"></script>
@@ -143,16 +145,18 @@
 
         class ArkRoute {
           constructor() {
+            // plain bags for the proxy; DO NOT predeclare reserved keys
             this.inputs  = {};
             this.outputs = {};
             this.events  = {};
             this.emits   = {};
-            this.outputs.objectRoot = null;
           }
           onInit(ctx) {
             const T = ctx.THREE;
             const root = new T.Group();
-            this.outputs.objectRoot = root; // property assign only
+
+            // Set reserved output AFTER SDK setupOutputs runs
+            this.outputs.objectRoot = root;
 
             _ARK.inScene = _ARK.inScene || {};
             _ARK.inScene.available = true;
@@ -183,7 +187,7 @@
         // Create node and attach our component safely
         const node = await S.createNode();
 
-        // Keep lights commented until we confirm no crashes
+        // Keep lights commented until everything is stable; if you add it, pass {}
         // try { node.addComponent("mp.lights", {}); } catch {}
 
         // Guaranteed-plain options object (and guard)
