@@ -52,7 +52,11 @@
     // ----------------------------
     // Config / UI helpers
     // ----------------------------
-    const BACKEND_URL = "https://om-antibodies-males-owen.trycloudflare.com";
+    // Prefer same-origin so it works on localhost and Cloudflare tunnel.
+    // If you want to hard-wire your tunnel, set HARD_WIRE to your https URL.
+    const HARD_WIRE = ""; // e.g., "https://your-tunnel.trycloudflare.com"
+    const BACKEND_URL = HARD_WIRE || window.location.origin;
+
     const hud = document.getElementById('hud');
     const statusEl = document.getElementById('status');
     const say = (msg) => { hud.textContent = msg; console.log('[ARK]', msg); };
@@ -61,7 +65,6 @@
     const overlay = document.getElementById('overlay');
     const ctx2d = overlay.getContext('2d');
     function sizeOverlay() {
-      // use client size to keep resolution in sync
       overlay.width = overlay.clientWidth;
       overlay.height = overlay.clientHeight;
       ctx2d.clearRect(0,0,overlay.width,overlay.height);
@@ -98,12 +101,17 @@
     // ----------------------------
     // Place threat (demo logic)
     // ----------------------------
-    document.getElementById('btnPlaceThreat').addEventListener('click', () => {
+    document.getElementById('btnPlaceThreat').addEventListener('click', async () => {
       _ARK.threat = { placed:true };
       _ARK.lastRoute = { id:"demo" };
-      say("Threat placed (demo)");
+
+      // Demo overlay until algorithm is re-enabled
       drawOverlayRoute(_ARK.lastRoute);
-      // TODO: replace with fetch(`${BACKEND_URL}/route/auto`, { ... })
+      say("Threat placed (demo)");
+
+      // Example POST once your backend endpoint is ready:
+      // await fetch(`${BACKEND_URL}/route/auto`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ /* ... */ }) })
+      //   .then(r => r.json()).then(data => { /* render in-scene */ });
     });
 
     // ----------------------------
@@ -119,75 +127,90 @@
       const mpSdk = await viewer.playingPromise;
       status("SDK connected (WebComponent)");
 
-      // --- Scene bootstrap ---
-const S = mpSdk.Scene;
-if (S && typeof S.register === "function") {
-  // Helper that guarantees a plain, hasOwnProperty-capable object
-  const toPlain = (o) => {
-    if (!o || typeof o !== "object") return {};
-    // clone into a new object with Object.prototype (no null-proto)
-    return Object.assign({}, o);
-  };
+      const S = mpSdk.Scene;
+      if (S && typeof S.register==='function') {
+        // Helper that guarantees a plain, hasOwnProperty-capable object
+        const toPlain = (o) => {
+          if (!o || typeof o !== "object") return {};
+          return Object.assign({}, o); // clone onto Object.prototype
+        };
 
-  class ArkRoute {
-    constructor() {
-      // Start with plain objects so the wrapper is happy
-      this.inputs  = {};
-      this.outputs = {};
-      this.events  = {};
-      this.emits   = {};
+        class ArkRoute {
+          constructor() {
+            // Start with plain objects
+            this.inputs  = {};
+            this.outputs = {};
+            this.events  = {};
+            this.emits   = {};
+            // Predeclare keys we set later
+            this.outputs.objectRoot = null;
+          }
+          onInit(ctx) {
+            const T = ctx.THREE;
+            const root = new T.Group();
 
-      // Predeclare keys you’ll set later (optional, but safest)
-      this.outputs.objectRoot = null;
-    }
+            // Property assignment only (do not replace the outputs object)
+            this.outputs.objectRoot = root;
 
-    onInit(ctx) {
-      const T = ctx.THREE;
-      const root = new T.Group();
+            _ARK.inScene = _ARK.inScene || {};
+            _ARK.inScene.available = true;
+            _ARK.inScene.THREE = T;
+            _ARK.inScene.root = root;
 
-      // IMPORTANT: set a property — do NOT replace the outputs object
-      this.outputs.objectRoot = root;
+            say("In-scene component initialized");
+          }
+          onTick() {}
+          onDestroy() {
+            _ARK.inScene.available = false;
+            _ARK.inScene.root = null;
+            _ARK.inScene.THREE = null;
+            _ARK.inScene.routeMesh = null;
+          }
+        }
 
-      // Store a few handy refs for overlay/cleanup
-      _ARK.inScene = _ARK.inScene || {};
-      _ARK.inScene.available = true;
-      _ARK.inScene.THREE = T;
-      _ARK.inScene.root = root;
+        // Register with normalization BEFORE the SDK wraps it
+        await S.register("arkRoute", () => {
+          const c = new ArkRoute();
+          c.inputs  = toPlain(c.inputs);
+          c.outputs = toPlain(c.outputs);
+          c.events  = toPlain(c.events);
+          c.emits   = toPlain(c.emits);
+          return c;
+        });
 
-      say("In-scene component initialized");
-    }
+        // Create node and attach our component safely
+        const node = await S.createNode();
 
-    onTick() {}
+        // Keep lights out while isolating (add back later as node.addComponent("mp.lights", {}))
+        // try { node.addComponent("mp.lights", {}); } catch {}
 
-    onDestroy() {
-      _ARK.inScene.available = false;
-      _ARK.inScene.root = null;
-      _ARK.inScene.THREE = null;
-      _ARK.inScene.routeMesh = null;
-    }
-  }
+        // Build a guaranteed-plain options object and guard it
+        const arkOpts = toPlain({});
+        console.log("[ARK] addComponent about to run. typeof arkOpts:", typeof arkOpts,
+                    "proto is Object.prototype:", Object.getPrototypeOf(arkOpts) === Object.prototype);
 
-  // Register with a factory that normalizes bags BEFORE the SDK wraps them
-  await S.register("arkRoute", () => {
-    const c = new ArkRoute();
-    c.inputs  = toPlain(c.inputs);
-    c.outputs = toPlain(c.outputs);
-    c.events  = toPlain(c.events);
-    c.emits   = toPlain(c.emits);
-    return c;
-  });
+        if (!arkOpts || typeof arkOpts !== "object") {
+          throw new Error("[ARK] Refusing to call addComponent: options is not an object");
+        }
+        if (typeof arkOpts.hasOwnProperty !== "function") {
+          Object.setPrototypeOf(arkOpts, Object.prototype);
+          console.warn("[ARK] options lacked hasOwnProperty; repaired prototype.");
+        }
 
-  // Create node, add components with explicit {} options, then start
-  const node = await S.createNode();
+        node.addComponent("arkRoute", arkOpts);
+        await node.start();
+      } else {
+        console.warn("[ARK] Scene API not available; overlay fallback.");
+      }
 
-  // Keep or drop lights — but always pass {}
-  try { node.addComponent("mp.lights", {}); } catch {}
-
-  node.addComponent("arkRoute", {});  // explicit empty options is important
-  await node.start();
-} else {
-  console.warn("[ARK] Scene API not available; overlay fallback.");
-}
+      // Keep 2D overlay in sync if we’re not using in-scene rendering
+      try {
+        mpSdk.Camera.pose.subscribe(() => {
+          if (_ARK.lastRoute && !_ARK.inScene.available) drawOverlayRoute(_ARK.lastRoute);
+        });
+      } catch(err) {
+        console.warn("[ARK] pose.subscribe failed", err);
+      }
 
     })().catch(err => { console.warn("[ARK] bootstrap failed:", err); });
   </script>
