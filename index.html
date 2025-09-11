@@ -5,8 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ARK Safety Demo (WebComponent + Scene API)</title>
 
-  <!-- Import map: remap all three module URL forms to our shim.
-       Must appear BEFORE the Matterport script. -->
+  <!-- Import map MUST be before the Matterport script -->
   <script type="importmap">
   {
     "imports": {
@@ -67,7 +66,7 @@
     // ----------------------------
     // Config / UI helpers
     // ----------------------------
-    const HARD_WIRE = ""; // e.g., "https://your-tunnel.trycloudflare.com"
+    const HARD_WIRE = "";
     const BACKEND_URL = HARD_WIRE || window.location.origin;
 
     const hud = document.getElementById('hud');
@@ -119,9 +118,6 @@
       _ARK.lastRoute = { id:"demo" };
       drawOverlayRoute(_ARK.lastRoute);
       say("Threat placed (demo)");
-      // Example POST:
-      // await fetch(`${BACKEND_URL}/route/auto`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ /* ... */ }) })
-      //   .then(r => r.json()).then(data => { /* render 3D line later */ });
     });
 
     // ----------------------------
@@ -137,16 +133,13 @@
 
       const S = mpSdk.Scene;
       if (S && typeof S.register==='function') {
-        // Helper that guarantees a plain, hasOwnProperty-capable object
-        const toPlain = (o) => {
-          if (!o || typeof o !== "object") return {};
-          return Object.assign({}, o); // clone onto Object.prototype
-        };
+        const toPlain = (o) => (o && typeof o === "object") ? Object.assign({}, o) : {};
 
         class ArkRoute {
           constructor() {
-            // plain bags for the proxy; DO NOT predeclare reserved keys
-            this.inputs  = {};
+            // Non-empty inputs so SDK wraps and provides .onChanged
+            this.inputs  = { enabled: true };
+            // Plain bags; do NOT predeclare reserved keys like objectRoot/collider
             this.outputs = {};
             this.events  = {};
             this.emits   = {};
@@ -155,7 +148,7 @@
             const T = ctx.THREE;
             const root = new T.Group();
 
-            // Set reserved output AFTER SDK setupOutputs runs
+            // Set reserved output only AFTER setupOutputs has run
             this.outputs.objectRoot = root;
 
             _ARK.inScene = _ARK.inScene || {};
@@ -174,7 +167,6 @@
           }
         }
 
-        // Register with normalization BEFORE the SDK wraps it
         await S.register("arkRoute", () => {
           const c = new ArkRoute();
           c.inputs  = toPlain(c.inputs);
@@ -184,24 +176,17 @@
           return c;
         });
 
-        // Create node and attach our component safely
         const node = await S.createNode();
 
-        // Keep lights commented until everything is stable; if you add it, pass {}
+        // Keep lights commented until fully stable
         // try { node.addComponent("mp.lights", {}); } catch {}
 
-        // Guaranteed-plain options object (and guard)
         const arkOpts = toPlain({});
         console.log("[ARK] addComponent about to run. typeof arkOpts:", typeof arkOpts,
                     "proto is Object.prototype:", Object.getPrototypeOf(arkOpts) === Object.prototype);
 
-        if (!arkOpts || typeof arkOpts !== "object") {
-          throw new Error("[ARK] Refusing to call addComponent: options is not an object");
-        }
-        if (typeof arkOpts.hasOwnProperty !== "function") {
-          Object.setPrototypeOf(arkOpts, Object.prototype);
-          console.warn("[ARK] options lacked hasOwnProperty; repaired prototype.");
-        }
+        if (!arkOpts || typeof arkOpts !== "object") throw new Error("[ARK] Refusing to call addComponent: options is not an object");
+        if (typeof arkOpts.hasOwnProperty !== "function") Object.setPrototypeOf(arkOpts, Object.prototype);
 
         node.addComponent("arkRoute", arkOpts);
         await node.start();
@@ -209,7 +194,6 @@
         console.warn("[ARK] Scene API not available; overlay fallback.");
       }
 
-      // Keep 2D overlay in sync if we’re not using in-scene rendering
       try {
         mpSdk.Camera.pose.subscribe(() => {
           if (_ARK.lastRoute && !_ARK.inScene.available) drawOverlayRoute(_ARK.lastRoute);
