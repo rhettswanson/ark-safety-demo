@@ -64,20 +64,20 @@
   <script type="module">
     import * as THREE from "three";
 
-    // Backend resolution (port 7860)
-const params = new URLSearchParams(window.location.search);
-const API_PARAM = params.get("api");
-const HARD_WIRE = "https://assembly-paperbacks-eddie-combat.trycloudflare.com";
-function resolveBackend() {
-  if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
-  if (HARD_WIRE) return HARD_WIRE.replace(/\/+$/,'');
-  const { protocol, hostname } = window.location;
-  if (!/github\.io$/i.test(hostname)) return `${protocol}//${hostname}:7860`;
-  console.warn("[ARK] Backend needs an https tunnel on github.io. Use ?api=https://<your-tunnel>/");
-  return `${protocol}//${hostname}`;
-}
-const BACKEND_URL = resolveBackend();
-window.BACKEND_URL = BACKEND_URL;
+    // ------------ Backend resolution (Cloudflare tunnel first)
+    const params = new URLSearchParams(window.location.search);
+    const API_PARAM = params.get("api");
+    const HARD_WIRE = "https://assembly-paperbacks-eddie-combat.trycloudflare.com"; // <- your tunnel
+    function resolveBackend() {
+      if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
+      if (HARD_WIRE) return HARD_WIRE.replace(/\/+$/,'');
+      const { protocol, hostname } = window.location;
+      if (!/github\.io$/i.test(hostname)) return `${protocol}//${hostname}:7860`;
+      console.warn("[ARK] Backend needs an https tunnel on github.io. Use ?api=https://<your-tunnel>/");
+      return `${protocol}//${hostname}`;
+    }
+    const BACKEND_URL = resolveBackend();
+    window.BACKEND_URL = BACKEND_URL; // expose for console debugging
 
     // ------------ UI helpers
     const hud = document.getElementById('hud');
@@ -94,12 +94,20 @@ window.BACKEND_URL = BACKEND_URL;
     };
 
     // --------- Coordinate helpers (Matterport world → nav XY, and back)
-    const worldToNav = (p) => ({ x: p.x, y: p.z });        // floor plane: use XZ
-    const navToWorld = (p) => new THREE.Vector3(p.x, 0, p.y);
+    const ROUTE_Y = 0.06; // 6 cm above floor to avoid z-fighting
+
+    const worldToNav = (p) => ({ x: p.x, y: p.z });                 // floor plane: use XZ
+    const navToWorld = (p) => new THREE.Vector3(p.x, ROUTE_Y, p.y); // lift off floor
+
     const anyPointToWorld = (p) => {
-      if (Array.isArray(p))   return (p.length >= 3) ? new THREE.Vector3(p[0], p[1], p[2]) : new THREE.Vector3(p[0], 0, p[1]);
-      if ("z" in p)           return new THREE.Vector3(p.x, p.y, p.z);
-      return new THREE.Vector3(p.x, 0, p.y);
+      if (Array.isArray(p)) {
+        return (p.length >= 3)
+          ? new THREE.Vector3(p[0], (p[1] ?? 0) + ROUTE_Y, p[2])
+          : new THREE.Vector3(p[0], ROUTE_Y, p[1]);
+      }
+      if ("z" in p)   return new THREE.Vector3(p.x, (p.y ?? 0) + ROUTE_Y, p.z);
+      // nav {x,y}
+      return navToWorld(p);
     };
 
     // --------- Minimal 3D line renderer (dashed)
@@ -125,7 +133,14 @@ window.BACKEND_URL = BACKEND_URL;
       const geo = new T.BufferGeometry();
       geo.setAttribute('position', new T.Float32BufferAttribute(verts, 3));
 
-      const mat = new T.LineDashedMaterial({ color: 0x21d38c, dashSize: 0.5, gapSize: 0.3 });
+      const mat = new T.LineDashedMaterial({
+        color: 0x21d38c,
+        dashSize: 0.5,
+        gapSize: 0.3,
+        depthTest: false,   // draw on top so it never disappears in the floor
+        transparent: false
+      });
+
       const line = new T.Line(geo, mat);
       line.computeLineDistances();
 
@@ -167,8 +182,9 @@ window.BACKEND_URL = BACKEND_URL;
           body: JSON.stringify({
             start:  { x: startNav.x,  y: startNav.y  },
             threat: { x: threatNav.x, y: threatNav.y },
+            // the backend ignores these if not used; safe to keep
             k: 3, dx: 1.5,
-            weights: { alpha: 1.0, beta: 8.0, gamma: 2.0, delta: 0.0 }
+            weights: { alpha: 1.0, beta: 12.0, gamma: 2.0, delta: 0.0 }
           })
         });
 
