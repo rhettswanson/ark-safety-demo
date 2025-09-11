@@ -19,6 +19,7 @@
   }
   </script>
 
+  <!-- Matterport WebComponent -->
   <script type="module" src="https://unpkg.com/@matterport/webcomponent@0.1.45/dist/matterport-viewer.esm.js?module"></script>
 
   <style>
@@ -109,7 +110,7 @@
     const params = new URLSearchParams(window.location.search);
     const API_PARAM = params.get("api");
     // Default to your Cloudflare tunnel (override anytime with ?api=...)
-    const HARD_WIRE = "https://ta-link-insured-refused.trycloudflare.com";
+    const HARD_WIRE = "https://assembly-paperbacks-eddie-combat.trycloudflare.com";
     function resolveBackend() {
       if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
       if (HARD_WIRE) return HARD_WIRE.replace(/\/+$/,'');
@@ -134,7 +135,8 @@
       threatWorld: null,
       threatNav:   null,
       meta: null,
-      annot: [],         // {id,label,x,y,type, conf?, width_m?}
+      annot: [],         // {id,label,x,y,type, confidence?, width_m?}
+      navBounds: null
     };
 
     // --------- Coordinate helpers (nav meters -> world)
@@ -230,19 +232,28 @@
     const annotConfMin = document.getElementById('annotConfMin');
     const annotAutoBtn = document.getElementById('annotAuto');
 
-    // Start with only labeled items (exits/shelters) to avoid stray pins.
+    // Start ONLY from saved exits/shelters
     async function openAnnotator() {
       const meta = await (await fetch(`${BACKEND_URL}/site/meta`)).json();
       _ARK.meta = meta;
 
-      _ARK.annot = [];
-      for (const ex of (meta.exits || []))    _ARK.annot.push({ id: ex.id, label: ex.label, x: ex.x, y: ex.y, type: 'exit' });
-      for (const sh of (meta.shelters || [])) _ARK.annot.push({ id: sh.id, label: sh.label, x: sh.x, y: sh.y, type: 'shelter' });
+      _ARK.annot = [];         // hard reset
+      clearPins();
+
+      for (const ex of (meta.exits || []))
+        _ARK.annot.push({ id: ex.id, label: ex.label, x: ex.x, y: ex.y, type: 'exit' });
+      for (const sh of (meta.shelters || []))
+        _ARK.annot.push({ id: sh.id, label: sh.label, x: sh.x, y: sh.y, type: 'shelter' });
+
+      // Fetch nav bounds to skip off-space autos
+      try {
+        _ARK.navBounds = await (await fetch(`${BACKEND_URL}/site/nav_bounds`)).json();
+      } catch (_) { _ARK.navBounds = null; }
 
       renderAnnotList();
 
-      // Auto-merge from backend doors_auto feed
-      try { await loadAutoMeta(true); } catch {}
+      // Auto-merge/add from backend doors_auto feed
+      try { await loadAutoMeta(true); } catch (e) { console.warn(e); }
       buildPins();
 
       annot.classList.add('show');
@@ -315,44 +326,55 @@
       annot.classList.remove('show');
     };
 
-    // ---- Auto meta: fetch from backend (/site/doors_auto)
+    // ---- Auto meta: fetch from backend (/site/doors_auto), with bounds + tight merge radius
     async function loadAutoMeta(silent=false) {
       const resp = await fetch(`${BACKEND_URL}/site/doors_auto`);
       const j = await resp.json();
       const src = Array.isArray(j) ? j : (j.doors || []);
-      let merged = 0, added = 0;
 
-      // nearest-neighbor merge (<= 0.8 m)
-      const R = 0.8;
-      function nnIdx(x,y){
-        let best=-1, bd=R+1;
-        for (let i=0;i<_ARK.annot.length;i++){
-          const dx=_ARK.annot[i].x-x, dy=_ARK.annot[i].y-y;
-          const d=Math.hypot(dx,dy);
-          if (d<bd){ bd=d; best=i; }
+      let merged = 0, added = 0, skipped = 0;
+
+      // small merge radius (35 cm) to avoid accidental merges
+      const R = 0.35;
+
+      function inBounds(x, y) {
+        const b = _ARK.navBounds;
+        if (!b || !b.min || !b.max) return true;
+        const m = 5.0; // 5 m margin beyond nav area
+        return (x >= b.min[0]-m && x <= b.max[0]+m && y >= b.min[1]-m && y <= b.max[1]+m);
+      }
+
+      function nnIdx(x, y) {
+        let best = -1, bd = R + 1;
+        for (let i = 0; i < _ARK.annot.length; i++) {
+          const dx = _ARK.annot[i].x - x, dy = _ARK.annot[i].y - y;
+          const d  = Math.hypot(dx, dy);
+          if (d < bd) { bd = d; best = i; }
         }
-        return bd<=R ? best : -1;
+        return (bd <= R) ? best : -1;
       }
 
       for (const d of src) {
         const p = d.pos || d.pos_nav || d.nav || d.xy;
-        if (!p || p.length<2) continue;
-        const x = +p[0], y = +p[1];
-        const i = nnIdx(x,y);
+        if (!p || p.length < 2) continue;
 
-        const width_m   = d.width_m ?? d.width ?? null;
+        const x = +p[0], y = +p[1];
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !inBounds(x, y)) { skipped++; continue; }
+
+        const i = nnIdx(x, y);
+
+        const width_m    = d.width_m ?? d.width ?? null;
         const confidence = d.confidence ?? d.conf ?? d.score ?? null;
 
         if (i >= 0) {
-          if (width_m != null)   _ARK.annot[i].width_m = +width_m;
-          if (confidence != null) _ARK.annot[i].confidence = +confidence;
+          if (width_m != null)     _ARK.annot[i].width_m = +width_m;
+          if (confidence != null)  _ARK.annot[i].confidence = +confidence;
           if (!_ARK.annot[i].label && width_m != null) {
             const inches = Math.round(+width_m * 39.37);
             _ARK.annot[i].label = `Door (${inches}")`;
           }
           merged++;
         } else {
-          // No nearby labeled item -> add as candidate (gray)
           const inches = width_m != null ? Math.round(+width_m * 39.37) : null;
           _ARK.annot.push({
             id: `cand_${Date.now()}_${added}`,
@@ -366,7 +388,7 @@
         }
       }
 
-      if (!silent) say(`Auto meta: ${merged} merged, ${added} added`);
+      if (!silent) say(`Auto meta: ${merged} merged, ${added} added, ${skipped} skipped`);
       renderAnnotList();
       buildPins();
     }
