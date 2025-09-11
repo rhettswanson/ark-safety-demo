@@ -119,62 +119,60 @@
       const mpSdk = await viewer.playingPromise;
       status("SDK connected (WebComponent)");
 
-      const S = mpSdk.Scene;
-      if (S && typeof S.register==='function') {
+      // --- Scene bootstrap ---
+const S = mpSdk.Scene;
+if (S && typeof S.register === "function") {
+  class ArkRoute {
+    constructor() {
+      // Make sure these are plain objects with Object.prototype
+      this.inputs  = Object.create(Object.prototype);
+      this.outputs = Object.create(Object.prototype);
+      this.events  = Object.create(Object.prototype);
+      this.emits   = Object.create(Object.prototype);
 
-        // >>> FIX: define inputs/outputs at construction time <<<
-        class ArkRoute {
-          constructor() {
-  this.inputs  = Object.create(Object.prototype);
-  this.outputs = Object.create(Object.prototype);
-  this.events  = Object.create(Object.prototype);
-  this.emits   = Object.create(Object.prototype);
-  this.outputs.objectRoot = null;
- }
-     onInit(ctx) {
-       const T = ctx.THREE;
-       const root = new T.Group();
-       this.outputs.objectRoot = root;
-      }
+      // Predeclare the key we'll set in onInit
+      this.outputs.objectRoot = null;
+    }
 
-            _ARK["inScene"]["available"] = true;
-            _ARK["inScene"]["THREE"] = T;
-            _ARK["inScene"]["root"] = root;
+    onInit(ctx) {
+      const T = ctx.THREE;
+      const root = new T.Group();
 
-            // (optional) You can create and attach a mesh here later for in-scene routes
-            // const geo = new T.BufferGeometry(); const mat = new T.LineDashedMaterial(...);
-            // const mesh = new T.Line(geo, mat); root.add(mesh); _ARK.inScene.routeMesh = mesh;
+      // IMPORTANT: property assignment, don't replace the outputs object
+      this.outputs.objectRoot = root;
 
-            say("In-scene component initialized");
-          }
-          onTick() {}
-          onDestroy() {
-            _ARK.inScene.available=false;
-            _ARK.inScene.root=null;
-            _ARK.inScene.THREE=null;
-            _ARK.inScene.routeMesh=null;
-          }
-        }
+      // Clean, semicolon-terminated lines (avoid stray dots/underscores)
+      _ARK.inScene = _ARK.inScene || {};
+      _ARK.inScene.available = true;
+      _ARK.inScene.THREE = T;
+      _ARK.inScene.root = root;
 
-        await S.register('arkRoute', () => new ArkRoute());
+      say("In-scene component initialized");
+    }
 
-        // create a node while it's initializing, add optional lights, then our component
-        const node = await S.createNode();
-        try { node.addComponent('mp.lights', {}); } catch {}
-        node.addComponent('arkRoute', {});
-        await node.start();
-      } else {
-        console.warn("[ARK] Scene API not available; overlay fallback.");
-      }
+    onTick() {}
 
-      // keep 2D overlay in sync if we’re not using in-scene rendering
-      try {
-        mpSdk.Camera.pose.subscribe(() => {
-          if (_ARK.lastRoute && !_ARK.inScene.available) drawOverlayRoute(_ARK.lastRoute);
-        });
-      } catch(err) {
-        console.warn("[ARK] pose.subscribe failed", err);
-      }
+    onDestroy() {
+      _ARK.inScene.available = false;
+      _ARK.inScene.root = null;
+      _ARK.inScene.THREE = null;
+      _ARK.inScene.routeMesh = null;
+    }
+  }
+
+  await S.register("arkRoute", () => new ArkRoute());
+
+  // Create a node while it's initializing, add optional lights, then our component
+  const node = await S.createNode();
+
+  // Either keep this (with {}) or comment it out entirely
+  try { node.addComponent("mp.lights", {}); } catch {}
+
+  node.addComponent("arkRoute", {});    // keep explicit {}
+  await node.start();
+} else {
+  console.warn("[ARK] Scene API not available; overlay fallback.");
+}
 
     })().catch(err => { console.warn("[ARK] bootstrap failed:", err); });
   </script>
