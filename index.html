@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ARK Safety Demo (WebComponent + Scene API)</title>
 
-  <!-- Import map kept (no examples used now, so we don't import 'three' at all) -->
+  <!-- Import map kept for safety; we don't import 'three' directly -->
   <script type="importmap">
   {
     "imports": {
@@ -83,7 +83,7 @@
     const say = (m) => { hud.textContent = m; console.log('[ARK]', m); };
     const status = (m) => { statusEl.textContent = m; };
 
-    // In-scene state (we will ONLY use ctx.THREE from the Scene API)
+    // In-scene state (always use the Scene renderer's THREE)
     const _ARK = {
       inScene: { available:false, THREE:null, root:null, routeMesh:null },
       camera: null,
@@ -91,8 +91,8 @@
       threatNav:   null
     };
 
-    // --------- Coordinate helpers (use ctx.THREE once available)
-    const ROUTE_Y = 0.10; // 10 cm above floor for visibility
+    // --------- Coordinate helpers
+    const ROUTE_Y = 0.10; // 10 cm above floor
 
     const worldToNav = (p) => ({ x: p.x, y: p.z }); // floor plane uses XZ
 
@@ -101,7 +101,6 @@
       return new T.Vector3(x,y,z);
     }
     function anyPointToWorldT(p) {
-      const T = _ARK.inScene.THREE;
       if (Array.isArray(p)) {
         return (p.length >= 3) ? v3(p[0], (p[1] ?? 0) + ROUTE_Y, p[2])
                                : v3(p[0], ROUTE_Y, p[1]);
@@ -129,7 +128,7 @@
       const pts = points.map(p => anyPointToWorldT(p));
       const curve = new T.CatmullRomCurve3(pts, false, "centripetal", 0.35);
       const tubularSegments = Math.max(100, pts.length * 20);
-      const radius = 0.06;          // 6 cm thick
+      const radius = 0.06;          // 6 cm thick; bump to 0.10 if you want even thicker
       const radialSegments = 12;
 
       const geo = new T.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
@@ -222,13 +221,20 @@
             this.events  = {};
             this.emits   = {};
           }
-          onInit(ctx) {
-            const T = ctx.THREE || window.THREE; // <-- use Matterport's Three
+          onInit() {
+            // Scene loader calls onInit() with no args.
+            // Use the renderer's THREE from the instance, else fall back to window.THREE.
+            const T =
+              (this && this.THREE) ||
+              (typeof window !== "undefined" && window.THREE);
+
+            if (!T) throw new Error("THREE not available from Scene");
+
             const root = new T.Group();
             this.outputs.objectRoot = root;
 
             _ARK.inScene.available = true;
-            _ARK.inScene.THREE = T;
+            _ARK.inScene.THREE = T;   // use THIS THREE everywhere
             _ARK.inScene.root = root;
 
             say("In-scene component initialized");
