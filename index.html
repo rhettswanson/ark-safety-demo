@@ -52,8 +52,7 @@
     // ----------------------------
     // Config
     // ----------------------------
-    const BACKEND_URL = window.location.origin; // works for localhost and Cloudflare
-
+    const BACKEND_URL = window.location.origin; // localhost or Cloudflare
     const hud = document.getElementById('hud');
     const statusEl = document.getElementById('status');
     const say = (msg) => { hud.textContent = msg; console.log('[ARK]', msg); };
@@ -114,10 +113,9 @@
 
     (async () => {
       await customElements.whenDefined('matterport-viewer');
-      await viewer.playingPromise;
 
-      /** @type {import('@matterport/webcomponent').MpSdk} */
-      const _sdk = await viewer.getSdk();
+      // ✅ Correct bootstrap: playingPromise resolves to mpSdk
+      const _sdk = await viewer.playingPromise;
       status("SDK connected (WebComponent)");
 
       const S = _sdk.Scene;
