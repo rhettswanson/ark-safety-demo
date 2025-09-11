@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ARK Safety Demo (WebComponent + Scene API)</title>
 
-  <!-- Three.js import shim (prevents version clashes with Showcase) -->
+  <!-- Three.js import shim -->
   <script type="importmap">
   {
     "imports": {
@@ -23,7 +23,7 @@
   <script type="module" src="https://unpkg.com/@matterport/webcomponent@0.1.45/dist/matterport-viewer.esm.js?module"></script>
 
   <style>
-    html, body { height: 100%; margin: 0; background: #0b0f14; color: #e8edf2; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    html, body { height: 100%; margin: 0; background: #0b0f14; color: #e8edf2; font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
     .app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
     header { display: flex; gap: .5rem; align-items: center; padding: .75rem 1rem; background: #11161d; border-bottom: 1px solid #1f2a37; }
     header .tag { font-weight: 600; opacity: .85; }
@@ -36,16 +36,17 @@
     matterport-viewer { position: absolute; inset: 0; width: 100%; height: 100%; }
     .hud { position: absolute; left: 12px; bottom: 12px; background: rgba(9,12,17,.72); border: 1px solid rgba(64,86,110,.55); padding: .35rem .6rem; border-radius: .5rem; font-size: .85rem; user-select: none; z-index: 10040; }
 
-    /* Annotator panel */
+    /* Annotator */
     .annot { position: absolute; top: 0; right: 0; width: 420px; height: 100%;
              background: rgba(15,20,27,.96); border-left: 1px solid #263447;
              display: none; flex-direction: column; z-index: 10050; }
     .annot.show { display: flex; }
-    .annot .head { display:grid; grid-template-columns: 1fr 120px auto auto; gap:.5rem;
+    .annot .head { display:grid; grid-template-columns: 1fr 120px auto auto auto; gap:.5rem;
                    align-items:center; padding:.6rem .8rem; border-bottom:1px solid #223042; }
-    .annot .head .title { font-weight:600; grid-column: 1 / 5; }
-    .annot .head input[type="text"] { background:#0f1520; color:#e8edf2; border:1px solid #2b3949; border-radius:.45rem; padding:.35rem .5rem; }
-    .annot .head input[type="number"] { background:#0f1520; color:#e8edf2; border:1px solid #2b3949; border-radius:.45rem; padding:.35rem .5rem; width: 120px; }
+    .annot .head .title { font-weight:600; grid-column: 1 / 6; }
+    .annot .head input[type="text"],
+    .annot .head input[type="number"] { background:#0f1520; color:#e8edf2; border:1px solid #2b3949; border-radius:.45rem; padding:.35rem .5rem; }
+    .annot .head input[type="number"] { width: 120px; }
     .annot .head button { all:unset; background:#1f2a37; border:1px solid #2b3949; padding:.3rem .6rem; border-radius:.45rem; cursor:pointer; }
     .annot .head button:hover { background:#243244; }
 
@@ -89,6 +90,7 @@
           <div class="title">Annotate Doors</div>
           <input id="annotFilter" type="text" placeholder="filter by label/id" />
           <input id="annotConfMin" type="number" step="0.01" min="0" max="1" value="0" title="min confidence (0..1)" />
+          <button id="annotAddHere">Add here</button>
           <button id="annotAuto">Auto meta</button>
           <div style="display:flex; gap:.4rem; justify-self:end;">
             <button id="annotSave">Save</button>
@@ -99,7 +101,7 @@
         <div id="annotBody" class="body"></div>
 
         <div class="foot">
-          <span class="pill">Tip: click “Show” to flash pin in scene</span>
+          <span class="pill">Tip: move camera over a doorway (floorplan or 3D) then click “Add here”. Set type & label. The pin flashes pink to confirm.</span>
         </div>
       </div>
     </div>
@@ -109,7 +111,6 @@
     // ------------ Backend resolution
     const params = new URLSearchParams(window.location.search);
     const API_PARAM = params.get("api");
-    // Default to your Cloudflare tunnel (override anytime with ?api=...)
     const HARD_WIRE = "https://ta-link-insured-refused.trycloudflare.com";
     function resolveBackend() {
       if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
@@ -187,9 +188,9 @@
       }
     }
     function colorForType(type) {
-      if (type === "exit")    return 0x2ee06e;
-      if (type === "shelter") return 0x5ea7ff;
-      return 0xcccccc; // gray for unlabeled
+      if (type === "exit")    return 0x2ee06e; // green
+      if (type === "shelter") return 0x5ea7ff; // blue
+      return 0xcccccc; // gray unlabeled
     }
     function buildPins() {
       if (!_ARK.inScene.available || !_ARK.annot.length) return;
@@ -211,13 +212,14 @@
         root.add(m);
       }
     }
-    function flashPin(i) {
+    function flashPin(i) { flashPinColor(i, 0xff3366, 900); }
+    function flashPinColor(i, hex, ms=1200) {
       const root = _ARK.inScene.pinsRoot; if (!root) return;
       const m = root.children.find(c => c.userData.recIndex === i);
       if (!m) return;
       const orig = m.material.color.getHex();
-      m.material.color.setHex(0xff3366);
-      setTimeout(() => m.material.color.setHex(orig), 900);
+      m.material.color.setHex(hex);
+      setTimeout(() => m.material.color.setHex(orig), ms);
     }
     function updatePinColor(i) {
       const root = _ARK.inScene.pinsRoot; if (!root) return;
@@ -231,13 +233,13 @@
     const annotFilter = document.getElementById('annotFilter');
     const annotConfMin = document.getElementById('annotConfMin');
     const annotAutoBtn = document.getElementById('annotAuto');
+    const annotAddHereBtn = document.getElementById('annotAddHere');
 
-    // Start ONLY from saved exits/shelters
     async function openAnnotator() {
       const meta = await (await fetch(`${BACKEND_URL}/site/meta`)).json();
       _ARK.meta = meta;
 
-      _ARK.annot = [];         // hard reset
+      _ARK.annot = [];         // start only from saved items
       clearPins();
 
       for (const ex of (meta.exits || []))
@@ -245,17 +247,14 @@
       for (const sh of (meta.shelters || []))
         _ARK.annot.push({ id: sh.id, label: sh.label, x: sh.x, y: sh.y, type: 'shelter' });
 
-      // Fetch nav bounds to skip off-space autos
-      try {
-        _ARK.navBounds = await (await fetch(`${BACKEND_URL}/site/nav_bounds`)).json();
-      } catch (_) { _ARK.navBounds = null; }
+      // Try nav bounds (for optional auto meta)
+      try { _ARK.navBounds = await (await fetch(`${BACKEND_URL}/site/nav_bounds`)).json(); }
+      catch { _ARK.navBounds = null; }
 
       renderAnnotList();
-
-      // Auto-merge/add from backend doors_auto feed
-      try { await loadAutoMeta(true); } catch (e) { console.warn(e); }
       buildPins();
 
+      // NOTE: we no longer call loadAutoMeta() automatically.
       annot.classList.add('show');
     }
 
@@ -278,7 +277,11 @@
           <option value="exit">Exit</option>
           <option value="shelter">Shelter</option>`;
         sel.value = rec.type || "";
-        sel.onchange = () => { rec.type = sel.value; updatePinColor(i); };
+        sel.onchange = () => { 
+          rec.type = sel.value; 
+          updatePinColor(i);
+          if (rec.type) flashPinColor(i, 0xff66cc, 1200); // pink flash on label
+        };
 
         const lab = document.createElement('input');
         lab.className = 'lbl';
@@ -326,24 +329,21 @@
       annot.classList.remove('show');
     };
 
-    // ---- Auto meta: fetch from backend (/site/doors_auto), with bounds + tight merge radius
+    // ---- Optional auto meta (kept, but not called automatically)
     async function loadAutoMeta(silent=false) {
       const resp = await fetch(`${BACKEND_URL}/site/doors_auto`);
       const j = await resp.json();
       const src = Array.isArray(j) ? j : (j.doors || []);
 
       let merged = 0, added = 0, skipped = 0;
-
-      // small merge radius (35 cm) to avoid accidental merges
       const R = 0.35;
 
       function inBounds(x, y) {
         const b = _ARK.navBounds;
         if (!b || !b.min || !b.max) return true;
-        const m = 5.0; // 5 m margin beyond nav area
+        const m = 5.0;
         return (x >= b.min[0]-m && x <= b.max[0]+m && y >= b.min[1]-m && y <= b.max[1]+m);
       }
-
       function nnIdx(x, y) {
         let best = -1, bd = R + 1;
         for (let i = 0; i < _ARK.annot.length; i++) {
@@ -393,6 +393,35 @@
       buildPins();
     }
     annotAutoBtn.addEventListener('click', () => loadAutoMeta(false).catch(console.error));
+
+    // ---- Add here: drop a pin at the center of the current view (intersect with floor)
+    annotAddHereBtn.addEventListener('click', () => {
+      try {
+        if (!_ARK.inScene.available || !_ARK.camera?.position || !_ARK.camera?.rotation) {
+          say("Need camera pose before adding"); return;
+        }
+        const T = _ARK.inScene.THREE;
+        const camPos = _ARK.camera.position;
+        const q = new T.Quaternion(_ARK.camera.rotation.x, _ARK.camera.rotation.y, _ARK.camera.rotation.z, _ARK.camera.rotation.w);
+        const forward = new T.Vector3(0,0,-1).applyQuaternion(q).normalize();
+
+        // Intersect ray (camPos + t*forward) with horizontal plane y = ROUTE_Y
+        const t = (ROUTE_Y - camPos.y) / forward.y;
+        const hit = (isFinite(t) ? camPos.clone().add(forward.multiplyScalar(t)) : camPos.clone());
+        const nav = worldToNav(hit);
+
+        const idx = _ARK.annot.length;
+        _ARK.annot.push({ id: `manual_${Date.now()}`, label: '', x: nav.x, y: nav.y, type: '' });
+
+        renderAnnotList();
+        buildPins();
+        flashPinColor(idx, 0xff66cc, 1200); // pink confirmation on create
+        say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
+      } catch (e) {
+        console.error(e);
+        say("Add failed");
+      }
+    });
 
     // ------------ Buttons
     document.getElementById('btnReset').addEventListener('click', () => {
