@@ -392,36 +392,67 @@
       renderAnnotList();
       buildPins();
     }
-    annotAutoBtn.addEventListener('click', () => loadAutoMeta(false).catch(console.error));
-
-    // ---- Add here: drop a pin at the center of the current view (intersect with floor)
     annotAddHereBtn.addEventListener('click', () => {
-      try {
-        if (!_ARK.inScene.available || !_ARK.camera?.position || !_ARK.camera?.rotation) {
-          say("Need camera pose before adding"); return;
-        }
-        const T = _ARK.inScene.THREE;
-        const camPos = _ARK.camera.position;
-        const q = new T.Quaternion(_ARK.camera.rotation.x, _ARK.camera.rotation.y, _ARK.camera.rotation.z, _ARK.camera.rotation.w);
-        const forward = new T.Vector3(0,0,-1).applyQuaternion(q).normalize();
+  try {
+    if (!_ARK.inScene.available || !_ARK.camera?.position) {
+      say("Need camera pose before adding"); 
+      return;
+    }
+    const T = _ARK.inScene.THREE;
 
-        // Intersect ray (camPos + t*forward) with horizontal plane y = ROUTE_Y
-        const t = (ROUTE_Y - camPos.y) / forward.y;
-        const hit = (isFinite(t) ? camPos.clone().add(forward.multiplyScalar(t)) : camPos.clone());
-        const nav = worldToNav(hit);
+    // Pose from SDK is plain numbers, convert to THREE types
+    const p = _ARK.camera.position || {};
+    const r = _ARK.camera.rotation || {};
 
-        const idx = _ARK.annot.length;
-        _ARK.annot.push({ id: `manual_${Date.now()}`, label: '', x: nav.x, y: nav.y, type: '' });
+    const camPos = new T.Vector3(+p.x || 0, +p.y || 0, +p.z || 0);
 
-        renderAnnotList();
-        buildPins();
-        flashPinColor(idx, 0xff66cc, 1200); // pink confirmation on create
-        say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
-      } catch (e) {
-        console.error(e);
-        say("Add failed");
+    // Build quaternion (supports quaternion or euler in the pose)
+    let q = new T.Quaternion();
+    if (typeof r.w === "number") {
+      q.set(+r.x || 0, +r.y || 0, +r.z || 0, +r.w || 1);
+    } else {
+      const e = new T.Euler(+r.x || 0, +r.y || 0, +r.z || 0, "XYZ");
+      q.setFromEuler(e);
+    }
+
+    // Ray from camera forward to horizontal plane y = ROUTE_Y
+    const forward = new T.Vector3(0, 0, -1).applyQuaternion(q).normalize();
+
+    let hit;
+    if (Math.abs(forward.y) > 1e-4) {
+      const t = (ROUTE_Y - camPos.y) / forward.y;
+      if (isFinite(t) && t > 0) {
+        hit = camPos.clone().addScaledVector(forward, t);
+      } else {
+        // behind or parallel → drop straight down to the plane
+        hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
       }
+    } else {
+      // looking exactly horizontal → vertical drop
+      hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
+    }
+
+    const nav = worldToNav(hit);
+    const idx = _ARK.annot.length;
+    _ARK.annot.push({
+      id: `manual_${Date.now()}`,
+      label: "",
+      x: nav.x,
+      y: nav.y,
+      type: ""   // unlabeled until you pick Exit/Shelter
     });
+
+    renderAnnotList();
+    buildPins();
+    // Confirmation flash (pink)
+    flashPinColor(idx, 0xff66cc, 1200);
+    say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
+  } catch (e) {
+    console.error(e);
+    say("Add failed");
+  }
+});
+
 
     // ------------ Buttons
     document.getElementById('btnReset').addEventListener('click', () => {
