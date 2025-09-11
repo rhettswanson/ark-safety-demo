@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ARK Safety Demo (WebComponent + Scene API)</title>
 
-  <!-- Import map MUST be before the Matterport script -->
+  <!-- Import map kept (no examples used now, so we don't import 'three' at all) -->
   <script type="importmap">
   {
     "imports": {
@@ -62,16 +62,10 @@
   </div>
 
   <script type="module">
-    import * as THREE from "three";
-    // Fat-line renderer (examples). These modules import 'three' (uses our import map).
-    import { Line2 }          from "https://unpkg.com/three@0.176.0/examples/jsm/lines/Line2.js?module";
-    import { LineMaterial }   from "https://unpkg.com/three@0.176.0/examples/jsm/lines/LineMaterial.js?module";
-    import { LineGeometry }   from "https://unpkg.com/three@0.176.0/examples/jsm/lines/LineGeometry.js?module";
-
     // ------------ Backend resolution (Cloudflare tunnel first)
     const params = new URLSearchParams(window.location.search);
     const API_PARAM = params.get("api");
-    const HARD_WIRE = "https://assembly-paperbacks-eddie-combat.trycloudflare.com"; // <- your tunnel
+    const HARD_WIRE = "https://assembly-paperbacks-eddie-combat.trycloudflare.com"; // your tunnel
     function resolveBackend() {
       if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
       if (HARD_WIRE) return HARD_WIRE.replace(/\/+$/,'');
@@ -81,7 +75,7 @@
       return `${protocol}//${hostname}`;
     }
     const BACKEND_URL = resolveBackend();
-    window.BACKEND_URL = BACKEND_URL; // expose for console debugging
+    window.BACKEND_URL = BACKEND_URL; // for console debugging
 
     // ------------ UI helpers
     const hud = document.getElementById('hud');
@@ -89,86 +83,72 @@
     const say = (m) => { hud.textContent = m; console.log('[ARK]', m); };
     const status = (m) => { statusEl.textContent = m; };
 
-    // In-scene state
+    // In-scene state (we will ONLY use ctx.THREE from the Scene API)
     const _ARK = {
       inScene: { available:false, THREE:null, root:null, routeMesh:null },
-      camera: null,           // mpSdk camera pose (we'll pull start from here)
-      threatWorld: null,      // {x,y,z} in Matterport world
-      threatNav:   null       // {x,y} mapped to nav coords
+      camera: null,
+      threatWorld: null,
+      threatNav:   null
     };
 
-    // --------- Coordinate helpers (Matterport world → nav XY, and back)
+    // --------- Coordinate helpers (use ctx.THREE once available)
     const ROUTE_Y = 0.10; // 10 cm above floor for visibility
 
-    const worldToNav = (p) => ({ x: p.x, y: p.z });                 // floor plane: use XZ
-    const navToWorld = (p) => new THREE.Vector3(p.x, ROUTE_Y, p.y); // lift off floor
+    const worldToNav = (p) => ({ x: p.x, y: p.z }); // floor plane uses XZ
 
-    const anyPointToWorld = (p) => {
+    function v3(x,y,z) {
+      const T = _ARK.inScene.THREE;
+      return new T.Vector3(x,y,z);
+    }
+    function anyPointToWorldT(p) {
+      const T = _ARK.inScene.THREE;
       if (Array.isArray(p)) {
-        return (p.length >= 3)
-          ? new THREE.Vector3(p[0], (p[1] ?? 0) + ROUTE_Y, p[2])
-          : new THREE.Vector3(p[0], ROUTE_Y, p[1]);
+        return (p.length >= 3) ? v3(p[0], (p[1] ?? 0) + ROUTE_Y, p[2])
+                               : v3(p[0], ROUTE_Y, p[1]);
       }
-      if ("z" in p)   return new THREE.Vector3(p.x, (p.y ?? 0) + ROUTE_Y, p.z);
+      if ("z" in p)   return v3(p.x, (p.y ?? 0) + ROUTE_Y, p.z);
       // nav {x,y}
-      return navToWorld(p);
-    };
+      return v3(p.x, ROUTE_Y, p.y);
+    }
 
-    // --------- Fat 3D line renderer (super visible)
+    // --------- Super-visible 3D route: TubeGeometry (neon green)
     function renderRoute3D(points) {
       if (!_ARK.inScene.available) throw new Error("In-scene not available; cannot render 3D route");
-
+      const T = _ARK.inScene.THREE;
       const root = _ARK.inScene.root;
 
-      // clear old route
+      // clear old
       if (_ARK.inScene.routeMesh) {
-        if (_ARK.inScene.routeMesh.geometry) _ARK.inScene.routeMesh.geometry.dispose?.();
-        if (_ARK.inScene.routeMesh.material) _ARK.inScene.routeMesh.material.dispose?.();
+        _ARK.inScene.routeMesh.geometry?.dispose?.();
+        _ARK.inScene.routeMesh.material?.dispose?.();
         root.remove(_ARK.inScene.routeMesh);
         _ARK.inScene.routeMesh = null;
       }
-
       if (!Array.isArray(points) || points.length < 2) throw new Error("renderRoute3D: invalid points");
 
-      const positions = [];
-      for (const p of points) {
-        const v = anyPointToWorld(p);
-        positions.push(v.x, v.y, v.z);
-      }
+      const pts = points.map(p => anyPointToWorldT(p));
+      const curve = new T.CatmullRomCurve3(pts, false, "centripetal", 0.35);
+      const tubularSegments = Math.max(100, pts.length * 20);
+      const radius = 0.06;          // 6 cm thick
+      const radialSegments = 12;
 
-      const geo = new LineGeometry();
-      geo.setPositions(positions);
-
-      const mat = new LineMaterial({
-        color: 0x22ff88,       // bright neon green
-        linewidth: 0.01,       // thick! (screen-space, with resolution set below)
-        dashed: false,
-        depthTest: false,      // draw on top of floor/furniture
+      const geo = new T.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
+      const mat = new T.MeshBasicMaterial({
+        color: 0x22ff88,           // neon green
+        depthTest: false,          // draw on top
         transparent: false
       });
-      mat.resolution.set(window.innerWidth, window.innerHeight);
+      const mesh = new T.Mesh(geo, mat);
 
-      const line = new Line2(geo, mat);
-      line.computeLineDistances();
-
-      root.add(line);
-      _ARK.inScene.routeMesh = line;
-
-      // keep width correct on resize
-      const onResize = () => {
-        if (_ARK.inScene.routeMesh?.material?.resolution) {
-          _ARK.inScene.routeMesh.material.resolution.set(window.innerWidth, window.innerHeight);
-        }
-      };
-      window.removeEventListener('resize', onResize);
-      window.addEventListener('resize', onResize);
+      root.add(mesh);
+      _ARK.inScene.routeMesh = mesh;
     }
 
     // ------------ Buttons
     document.getElementById('btnReset').addEventListener('click', () => {
       if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
-        if (_ARK.inScene.routeMesh.geometry) _ARK.inScene.routeMesh.geometry.dispose?.();
-        if (_ARK.inScene.routeMesh.material) _ARK.inScene.routeMesh.material.dispose?.();
+        _ARK.inScene.routeMesh.geometry?.dispose?.();
+        _ARK.inScene.routeMesh.material?.dispose?.();
         _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
         _ARK.inScene.routeMesh = null;
       }
@@ -208,7 +188,6 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
 
-        // Server may return either `route: [[x,y],...]` (nav) or `points: [{x,y,z}...]` (world)
         const pts = Array.isArray(data.route) ? data.route.map(([x,y]) => ({ x, y }))
                   : Array.isArray(data.points) ? data.points
                   : null;
@@ -221,7 +200,7 @@
       } catch (err) {
         console.error(err);
         say(`Error: ${err.message || err}`);
-        throw err; // surface crashes
+        throw err;
       }
     });
 
@@ -243,10 +222,10 @@
             this.events  = {};
             this.emits   = {};
           }
-          onInit() {
-            const T = THREE;
+          onInit(ctx) {
+            const T = ctx.THREE || window.THREE; // <-- use Matterport's Three
             const root = new T.Group();
-            this.outputs.objectRoot = root;  // set AFTER SDK setup of outputs
+            this.outputs.objectRoot = root;
 
             _ARK.inScene.available = true;
             _ARK.inScene.THREE = T;
@@ -258,8 +237,8 @@
           onDestroy() {
             _ARK.inScene.available = false;
             if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
-              if (_ARK.inScene.routeMesh.geometry) _ARK.inScene.routeMesh.geometry.dispose?.();
-              if (_ARK.inScene.routeMesh.material) _ARK.inScene.routeMesh.material.dispose?.();
+              _ARK.inScene.routeMesh.geometry?.dispose?.();
+              _ARK.inScene.routeMesh.material?.dispose?.();
               _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
             }
             _ARK.inScene.root = null;
@@ -280,7 +259,7 @@
         throw new Error("Scene API not available");
       }
 
-      // Keep the latest camera pose (start & threat capture)
+      // Keep the latest camera pose
       try {
         mpSdk.Camera.pose.subscribe((p) => { _ARK.camera = p; });
       } catch (err) {
