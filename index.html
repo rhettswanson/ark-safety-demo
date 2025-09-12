@@ -37,27 +37,32 @@
     .hud { position: absolute; left: 12px; bottom: 12px; background: rgba(9,12,17,.72); border: 1px solid rgba(64,86,110,.55); padding: .35rem .6rem; border-radius: .5rem; font-size: .85rem; user-select: none; z-index: 10040; }
 
     /* Annotator */
-    .annot { position: absolute; top: 0; right: 0; width: 420px; height: 100%;
+    .annot { position: absolute; top: 0; right: 0; width: 460px; height: 100%;
              background: rgba(15,20,27,.96); border-left: 1px solid #263447;
              display: none; flex-direction: column; z-index: 10050; }
     .annot.show { display: flex; }
-    .annot .head { display:grid; grid-template-columns: 1fr 120px auto auto auto; gap:.5rem;
+    .annot .head { display:grid; grid-template-columns: 1fr 120px 90px auto auto auto; gap:.5rem;
                    align-items:center; padding:.6rem .8rem; border-bottom:1px solid #223042; }
-    .annot .head .title { font-weight:600; grid-column: 1 / 6; }
+    .annot .head .title { font-weight:600; grid-column: 1 / -1; }
     .annot .head input[type="text"],
     .annot .head input[type="number"] { background:#0f1520; color:#e8edf2; border:1px solid #2b3949; border-radius:.45rem; padding:.35rem .5rem; }
-    .annot .head input[type="number"] { width: 120px; }
+    .annot .head input[type="number"] { width: 100%; }
     .annot .head button { all:unset; background:#1f2a37; border:1px solid #2b3949; padding:.3rem .6rem; border-radius:.45rem; cursor:pointer; }
     .annot .head button:hover { background:#243244; }
 
     .annot .body { overflow:auto; padding:.6rem; display:flex; gap:.6rem; flex-direction:column; }
-    .annot .row { display:grid; grid-template-columns: 78px 1fr auto auto; gap:.4rem; align-items:center; padding:.35rem .4rem; border:1px solid #223042; border-radius:.5rem; background:#0d131c; }
+    .annot .row { display:grid; grid-template-columns: 78px 1fr auto auto 92px; gap:.4rem; align-items:center; padding:.35rem .4rem; border:1px solid #223042; border-radius:.5rem; background:#0d131c; }
     .annot .row .type { width: 100%; }
     .annot .row .lbl { width: 100%; }
     .annot .row .meta { font-size:.8rem; opacity:.75; text-align:right; }
-    .annot .row button { all:unset; background:#1f2a37; border:1px solid #2b3949; padding:.3rem .45rem; border-radius:.45rem; cursor:pointer; }
+    .annot .row button { all:unset; background:#1f2a37; border:1px solid #2b3949; padding:.3rem .45rem; border-radius:.45rem; cursor:pointer; text-align:center; }
     .annot .foot { margin-top:auto; padding:.6rem; border-top:1px solid #223042; display:flex; gap:.5rem; }
     .pill { font-size:.8rem; opacity:.7; }
+
+    /* Nudge pad */
+    .nudge { display:grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap:2px; }
+    .nudge .sp { visibility:hidden; }
+    .nudge button { line-height:1; padding:.25rem .35rem; }
   </style>
 </head>
 
@@ -90,6 +95,7 @@
           <div class="title">Annotate Doors</div>
           <input id="annotFilter" type="text" placeholder="filter by label/id" />
           <input id="annotConfMin" type="number" step="0.01" min="0" max="1" value="0" title="min confidence (0..1)" />
+          <input id="annotStep" type="number" step="0.05" min="0.01" value="0.25" title="nudge step (meters)" />
           <button id="annotAddHere">Add here</button>
           <button id="annotAuto">Auto meta</button>
           <div style="display:flex; gap:.4rem; justify-self:end;">
@@ -101,7 +107,7 @@
         <div id="annotBody" class="body"></div>
 
         <div class="foot">
-          <span class="pill">Tip: move camera over a doorway (floorplan or 3D) then click “Add here”. Set type & label. The pin flashes pink to confirm.</span>
+          <span class="pill">Tip: center the doorway (floorplan or 3D) then click “Add here”. Use ← ↑ → ↓ to nudge by the step size. Pink flash confirms changes.</span>
         </div>
       </div>
     </div>
@@ -111,7 +117,7 @@
     // ------------ Backend resolution
     const params = new URLSearchParams(window.location.search);
     const API_PARAM = params.get("api");
-    const HARD_WIRE = "https://ta-link-insured-refused.trycloudflare.com";
+    const HARD_WIRE = "https://assembly-paperbacks-eddie-combat.trycloudflare.com";
     function resolveBackend() {
       if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
       if (HARD_WIRE) return HARD_WIRE.replace(/\/+$/,'');
@@ -192,6 +198,17 @@
       if (type === "shelter") return 0x5ea7ff; // blue
       return 0xcccccc; // gray unlabeled
     }
+    function getPinMesh(i) {
+      const root = _ARK.inScene.pinsRoot; if (!root) return null;
+      return root.children.find(c => c.userData.recIndex === i) || null;
+    }
+    function movePin(i, dx, dy) {
+      const rec = _ARK.annot[i]; if (!rec) return;
+      rec.x += dx; rec.y += dy;
+      const m = getPinMesh(i);
+      if (m) m.position.copy(navToWorld({x: rec.x, y: rec.y}));
+      flashPinColor(i, 0xff66cc, 500);
+    }
     function buildPins() {
       if (!_ARK.inScene.available || !_ARK.annot.length) return;
       ensurePinsRoot(); clearPins();
@@ -232,6 +249,7 @@
     const annotBody = document.getElementById('annotBody');
     const annotFilter = document.getElementById('annotFilter');
     const annotConfMin = document.getElementById('annotConfMin');
+    const annotStepEl = document.getElementById('annotStep');
     const annotAutoBtn = document.getElementById('annotAuto');
     const annotAddHereBtn = document.getElementById('annotAddHere');
 
@@ -247,14 +265,12 @@
       for (const sh of (meta.shelters || []))
         _ARK.annot.push({ id: sh.id, label: sh.label, x: sh.x, y: sh.y, type: 'shelter' });
 
-      // Try nav bounds (for optional auto meta)
       try { _ARK.navBounds = await (await fetch(`${BACKEND_URL}/site/nav_bounds`)).json(); }
       catch { _ARK.navBounds = null; }
 
       renderAnnotList();
       buildPins();
 
-      // NOTE: we no longer call loadAutoMeta() automatically.
       annot.classList.add('show');
     }
 
@@ -280,7 +296,7 @@
         sel.onchange = () => { 
           rec.type = sel.value; 
           updatePinColor(i);
-          if (rec.type) flashPinColor(i, 0xff66cc, 1200); // pink flash on label
+          if (rec.type) flashPinColor(i, 0xff66cc, 1200);
         };
 
         const lab = document.createElement('input');
@@ -288,10 +304,6 @@
         lab.placeholder = 'Label (e.g., Exit for Room 203)';
         lab.value = rec.label || "";
         lab.oninput = () => rec.label = lab.value;
-
-        const show = document.createElement('button');
-        show.textContent = 'Show';
-        show.onclick = () => flashPin(i);
 
         const meta = document.createElement('div');
         meta.className = 'meta';
@@ -303,10 +315,42 @@
           meta.textContent = '';
         }
 
+        const show = document.createElement('button');
+        show.textContent = 'Show';
+        show.onclick = () => flashPin(i);
+
+        // Nudge pad: ← ↑ → ↓ with configurable step
+        const nudge = document.createElement('div');
+        nudge.className = 'nudge';
+        const stepFn = () => (+annotStepEl.value || 0.25);
+
+        const mk = (txt, dx, dy) => {
+          const b = document.createElement('button');
+          b.textContent = txt;
+          b.onclick = () => movePin(i, dx * stepFn(), dy * stepFn());
+          return b;
+        };
+        // layout:
+        // [sp][↑][sp]
+        // [←][•][→]
+        // [sp][↓][sp]
+        nudge.appendChild(document.createElement('div')).className = 'sp';
+        nudge.appendChild(mk('↑', 0, -1));
+        nudge.appendChild(document.createElement('div')).className = 'sp';
+        nudge.appendChild(mk('←', -1, 0));
+        const dot = document.createElement('button'); dot.textContent = '•'; dot.title = 'flash';
+        dot.onclick = () => flashPin(i);
+        nudge.appendChild(dot);
+        nudge.appendChild(mk('→', +1, 0));
+        nudge.appendChild(document.createElement('div')).className = 'sp';
+        nudge.appendChild(mk('↓', 0, +1));
+        nudge.appendChild(document.createElement('div')).className = 'sp';
+
         row.appendChild(sel);
         row.appendChild(lab);
         row.appendChild(meta);
         row.appendChild(show);
+        row.appendChild(nudge);
         annotBody.appendChild(row);
       });
     }
@@ -329,7 +373,7 @@
       annot.classList.remove('show');
     };
 
-    // ---- Optional auto meta (kept, but not called automatically)
+    // ---- Optional auto meta (manual only)
     async function loadAutoMeta(silent=false) {
       const resp = await fetch(`${BACKEND_URL}/site/doors_auto`);
       const j = await resp.json();
@@ -392,67 +436,55 @@
       renderAnnotList();
       buildPins();
     }
+    annotAutoBtn.addEventListener('click', () => loadAutoMeta(false).catch(console.error));
+
+    // ---- Add here: robust raycast to floor plane
     annotAddHereBtn.addEventListener('click', () => {
-  try {
-    if (!_ARK.inScene.available || !_ARK.camera?.position) {
-      say("Need camera pose before adding"); 
-      return;
-    }
-    const T = _ARK.inScene.THREE;
+      try {
+        if (!_ARK.inScene.available || !_ARK.camera?.position) {
+          say("Need camera pose before adding"); 
+          return;
+        }
+        const T = _ARK.inScene.THREE;
 
-    // Pose from SDK is plain numbers, convert to THREE types
-    const p = _ARK.camera.position || {};
-    const r = _ARK.camera.rotation || {};
+        // Pose from SDK is plain numbers, convert to THREE types
+        const p = _ARK.camera.position || {};
+        const r = _ARK.camera.rotation || {};
 
-    const camPos = new T.Vector3(+p.x || 0, +p.y || 0, +p.z || 0);
+        const camPos = new T.Vector3(+p.x || 0, +p.y || 0, +p.z || 0);
 
-    // Build quaternion (supports quaternion or euler in the pose)
-    let q = new T.Quaternion();
-    if (typeof r.w === "number") {
-      q.set(+r.x || 0, +r.y || 0, +r.z || 0, +r.w || 1);
-    } else {
-      const e = new T.Euler(+r.x || 0, +r.y || 0, +r.z || 0, "XYZ");
-      q.setFromEuler(e);
-    }
+        let q = new T.Quaternion();
+        if (typeof r.w === "number") {
+          q.set(+r.x || 0, +r.y || 0, +r.z || 0, +r.w || 1);
+        } else {
+          const e = new T.Euler(+r.x || 0, +r.y || 0, +r.z || 0, "XYZ");
+          q.setFromEuler(e);
+        }
 
-    // Ray from camera forward to horizontal plane y = ROUTE_Y
-    const forward = new T.Vector3(0, 0, -1).applyQuaternion(q).normalize();
+        const forward = new T.Vector3(0, 0, -1).applyQuaternion(q).normalize();
 
-    let hit;
-    if (Math.abs(forward.y) > 1e-4) {
-      const t = (ROUTE_Y - camPos.y) / forward.y;
-      if (isFinite(t) && t > 0) {
-        hit = camPos.clone().addScaledVector(forward, t);
-      } else {
-        // behind or parallel → drop straight down to the plane
-        hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
+        let hit;
+        if (Math.abs(forward.y) > 1e-4) {
+          const t = (ROUTE_Y - camPos.y) / forward.y;
+          if (isFinite(t) && t > 0) hit = camPos.clone().addScaledVector(forward, t);
+          else hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
+        } else {
+          hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
+        }
+
+        const nav = worldToNav(hit);
+        const idx = _ARK.annot.length;
+        _ARK.annot.push({ id: `manual_${Date.now()}`, label: '', x: nav.x, y: nav.y, type: '' });
+
+        renderAnnotList();
+        buildPins();
+        flashPinColor(idx, 0xff66cc, 1200);
+        say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
+      } catch (e) {
+        console.error(e);
+        say("Add failed");
       }
-    } else {
-      // looking exactly horizontal → vertical drop
-      hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
-    }
-
-    const nav = worldToNav(hit);
-    const idx = _ARK.annot.length;
-    _ARK.annot.push({
-      id: `manual_${Date.now()}`,
-      label: "",
-      x: nav.x,
-      y: nav.y,
-      type: ""   // unlabeled until you pick Exit/Shelter
     });
-
-    renderAnnotList();
-    buildPins();
-    // Confirmation flash (pink)
-    flashPinColor(idx, 0xff66cc, 1200);
-    say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
-  } catch (e) {
-    console.error(e);
-    say("Add failed");
-  }
-});
-
 
     // ------------ Buttons
     document.getElementById('btnReset').addEventListener('click', () => {
