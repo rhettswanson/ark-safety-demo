@@ -102,37 +102,34 @@
       <div class="hud" id="hud">Idle</div>
 
       <!-- Annotator Panel -->
-      <div id="annot" class="annot">
-        <div class="head">
-  <div class="title">Annotate Doors</div>
+<div id="annot" class="annot">
+  <div class="head">
+    <div class="title">Annotate Doors</div>
 
-  <!-- Filter / Min confidence / Step (these wrap on narrow widths) -->
-  <input id="annotFilter" class="grow" type="text" placeholder="filter by label/id" />
-  <input id="annotConfMin" class="w72" type="number" step="0.01" min="0" max="1" value="0" title="min confidence (0..1)" />
-  <input id="annotStep" class="w64" type="number" step="0.05" min="0.01" value="0.25" title="nudge step (meters)" />
+    <!-- Filter / Min confidence / Step -->
+    <input id="annotFilter" class="grow" type="text" placeholder="filter by label/id" />
+    <input id="annotConfMin" class="w72" type="number" step="0.01" min="0" max="1" value="0" title="min confidence (0..1)" />
+    <input id="annotStep" class="w64" type="number" step="0.05" min="0.01" value="0.25" title="nudge step (meters)" />
 
-  <!-- Actions -->
-  <button id="annotAddHere">Add here</button>
-  <button id="annotAuto">Auto meta</button>
-  <button id="annotSave">Save</button>
-  <button id="annotClose">Close</button>
-</div>
-        </div>
-
-        <div id="annotBody" class="body"></div>
-
-        <div class="foot">
-          <span class="pill">Tip: center the doorway (floorplan or 3D) then click “Add here”. Use ← ↑ → ↓ to nudge by the step size. Pink flash confirms changes.</span>
-        </div>
-      </div>
-    </div>
+    <!-- Actions -->
+    <button id="annotAddHere">Add here</button>
+    <button id="annotAuto">Auto meta</button>
+    <button id="annotSave">Save</button>
+    <button id="annotClose">Close</button>
   </div>
+
+  <div id="annotBody" class="body"></div>
+
+  <div class="foot">
+    <span class="pill">Tip: center the doorway (floorplan or 3D) then click “Add here”. Use ← ↑ → ↓ to nudge by the step size. Pink flash confirms changes.</span>
+  </div>
+</div>
 
   <script type="module">
     // ------------ Backend resolution
     const params = new URLSearchParams(window.location.search);
     const API_PARAM = params.get("api");
-    const HARD_WIRE = "https://secondary-especially-will-hampshire.trycloudflare.com";
+    const HARD_WIRE = "https://context-zones-filed-piece.trycloudflare.com";
     function resolveBackend() {
       if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
       if (HARD_WIRE) return HARD_WIRE.replace(/\/+$/,'');
@@ -454,62 +451,68 @@
 
     // ---- Add here: robust raycast to floor plane
     annotAddHereBtn.addEventListener('click', () => {
-      try {
-        if (!_ARK.inScene.available || !_ARK.camera?.position) {
-          say("Need camera pose before adding"); 
-          return;
-        }
-        const T = _ARK.inScene.THREE;
+  try {
+    if (!_ARK.inScene.available || !_ARK.camera?.position) {
+      say("Need camera pose before adding");
+      return;
+    }
+    const T = _ARK.inScene.THREE;
 
-        // Pose from SDK is plain numbers, convert to THREE types
-        const p = _ARK.camera.position || {};
-        const r = _ARK.camera.rotation || {};
+    // camera pose -> THREE.Vector3 + Quaternion
+    const p = _ARK.camera.position || {};
+    const r = _ARK.camera.rotation || {};
+    const camPos = new T.Vector3(+p.x || 0, +p.y || 0, +p.z || 0);
 
-        const camPos = new T.Vector3(+p.x || 0, +p.y || 0, +p.z || 0);
+    let q = new T.Quaternion();
+    if (typeof r.w === "number") {
+      q.set(+r.x || 0, +r.y || 0, +r.z || 0, +r.w || 1);
+    } else {
+      const e = new T.Euler(+r.x || 0, +r.y || 0, +r.z || 0, "XYZ");
+      q.setFromEuler(e);
+    }
+    const forward = new T.Vector3(0, 0, -1).applyQuaternion(q).normalize();
 
-        let q = new T.Quaternion();
-        if (typeof r.w === "number") {
-          q.set(+r.x || 0, +r.y || 0, +r.z || 0, +r.w || 1);
-        } else {
-          const e = new T.Euler(+r.x || 0, +r.y || 0, +r.z || 0, "XYZ");
-          q.setFromEuler(e);
-        }
+    // intersect viewing ray with floor (ROUTE_Y)
+    let hit;
+    if (Math.abs(forward.y) > 1e-4) {
+      const t = (ROUTE_Y - camPos.y) / forward.y;
+      hit = (isFinite(t) && t > 0) ? camPos.clone().addScaledVector(forward, t)
+                                  : new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
+    } else {
+      hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
+    }
 
-        const forward = new T.Vector3(0, 0, -1).applyQuaternion(q).normalize();
+    const nav = worldToNav(hit);
 
-        let hit;
-        if (Math.abs(forward.y) > 1e-4) {
-          const t = (ROUTE_Y - camPos.y) / forward.y;
-          if (isFinite(t) && t > 0) hit = camPos.clone().addScaledVector(forward, t);
-          else hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
-        } else {
-          hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
-        }
-
-        const nav = worldToNav(hit);
-        const idx = _ARK.annot.length - 1;
-
-         // (Re)render list & pins
-            renderAnnotList();
-            buildPins();
-
-        // If filters hid the freshly added row, clear them and re-render
-           const body = document.getElementById('annotBody');
-           if (!body || body.children.length === 0) {
-           annotFilter.value = '';
-           annotConfMin.value = '0';
-          renderAnnotList();
-        }
-
-        // Flash the new pin for feedback
-         flashPinColor(idx, 0xff66cc, 1200);
-         say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
-
-      } catch (e) {
-        console.error(e);
-        say("Add failed");
-      }
+    // >>> NEW: record the pin so UI + 3D can render it
+    _ARK.annot.push({
+      id: `manual_${Date.now()}`,
+      label: '',
+      type: '',          // user will set exit/shelter
+      x: nav.x,
+      y: nav.y
     });
+    const idx = _ARK.annot.length - 1;
+
+    // Update UI + 3D pins
+    renderAnnotList();
+    buildPins();
+
+    // If filters hid the new row, clear & re-render
+    const body = document.getElementById('annotBody');
+    if (!body || body.children.length === 0) {
+      annotFilter.value = '';
+      annotConfMin.value = '0';
+      renderAnnotList();
+    }
+
+    flashPinColor(idx, 0xff66cc, 1200);
+    say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
+  } catch (e) {
+    console.error(e);
+    say("Add failed");
+  }
+});
 
     // ------------ Buttons
     document.getElementById('btnReset').addEventListener('click', () => {
