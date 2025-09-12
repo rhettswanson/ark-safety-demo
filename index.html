@@ -1,385 +1,624 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>ARK Safety Demo</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ARK Safety Demo (WebComponent + Scene API)</title>
 
-  <!-- (unchanged) base styles -->
+  <!-- Three.js import shim -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./three-shim.js",
+      "https://unpkg.com/three@%5E0.176.0?module": "./three-shim.js",
+      "https://unpkg.com/three@^0.176.0?module": "./three-shim.js",
+      "https://unpkg.com/three@0.176.0?module": "./three-shim.js",
+      "https://unpkg.com/three@0.176.0/build/three.module.js?module": "./three-shim.js",
+      "https://unpkg.com/three@0.176.0/build/three.module.js": "./three-shim.js"
+    }
+  }
+  </script>
+
+  <!-- Matterport WebComponent -->
+  <script type="module" src="https://unpkg.com/@matterport/webcomponent@0.1.45/dist/matterport-viewer.esm.js?module"></script>
+
   <style>
-    :root {
-      --bg:#0b1118; --panel:#0f1520; --ink:#e8edf2; --muted:#9fb0c3;
-      --line:#35ff87; --accent:#5dd6ff; --pink:#ff66cc;
-    }
-    html,body { height:100%; margin:0; background:var(--bg); color:var(--ink); font:14px/1.3 Inter,system-ui,Segoe UI,Arial,sans-serif; }
-    #app { position:fixed; inset:0; display:flex; flex-direction:column; }
-    header { display:flex; gap:.5rem; align-items:center; padding:.5rem .75rem; background:#0e141d; border-bottom:1px solid #1f2a37; }
-    header .spacer { flex:1 1 auto; opacity:.8; font-size:.92rem; }
-    header button { all:unset; background:#1f2a37; border:1px solid #2b3949; padding:.35rem .7rem; border-radius:.5rem; cursor:pointer; }
-    header button:hover { background:#263447; }
-    #stage { position:relative; flex:1 1 auto; overflow:hidden; }
-    matterport-viewer { position:absolute; inset:0; }
+    html, body { height: 100%; margin: 0; background: #0b0f14; color: #e8edf2; font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+    .app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+    header { display: flex; gap: .5rem; align-items: center; padding: .75rem 1rem; background: #11161d; border-bottom: 1px solid #1f2a37; }
+    header .tag { font-weight: 600; opacity: .85; }
+    header button { all: unset; background: #1f2a37; padding: .45rem .7rem; border-radius: .5rem; cursor: pointer; border: 1px solid #2b3949; }
+    header button:hover { background:#243244; }
+    header button:active { background:#1b2633; }
+    header .spacer { flex: 1 1 auto; opacity:.6; font-size:.9rem; }
 
-    .hud { position:absolute; left:.75rem; bottom:.75rem; background:rgba(15,20,27,.9);
-      border:1px solid #263447; border-radius:.5rem; padding:.35rem .6rem; font-size:.85rem; z-index:1030; }
-    .ok { color:#6ff2a6 } .warn{ color:#ffd26f } .err{ color:#ff8b8b }
+    .stage { position: relative; height: 100%; overflow: hidden; background: #000; }
+    matterport-viewer { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .hud { position: absolute; left: 12px; bottom: 12px; background: rgba(9,12,17,.72); border: 1px solid rgba(64,86,110,.55); padding: .35rem .6rem; border-radius: .5rem; font-size: .85rem; user-select: none; z-index: 10040; }
 
-    /* ──────────────────────────────────────────────────────────────
-       Annotator (UPDATED)
-       ────────────────────────────────────────────────────────────── */
-    .annot {
-      position:absolute; top:0; right:0; width:460px; height:100%;
-      background:rgba(15,20,27,.96); border-left:1px solid #263447;
-      display:none; flex-direction:column; z-index:10050; overflow:hidden;
-    }
-    .annot.show { display:flex; }
+    /* Annotator */
+.annot {
+  position: absolute; top: 0; right: 0; width: 460px; height: 100%;
+  background: rgba(15,20,27,.96); border-left: 1px solid #263447;
+  display: none; flex-direction: column; z-index: 10050;
+  overflow: hidden;                 /* prevent header bleed */
+}
+.annot.show { display: flex; }
 
-    .annot .head {
-      display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;
-      padding:.6rem .8rem; border-bottom:1px solid #223042;
-    }
-    .annot .head .title { flex:0 0 100%; font-weight:600; }
+.annot .head {
+  display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+  padding: .6rem .8rem; border-bottom: 1px solid #223042;
+}
+.annot .head .title { flex: 0 0 100%; font-weight: 600; }
 
-    .annot .head input[type="text"],
-    .annot .head input[type="number"]{
-      background:#0f1520; color:#e8edf2; border:1px solid #2b3949;
-      border-radius:.45rem; padding:.35rem .5rem;
-    }
-    .annot .head .grow { flex:1 1 180px; min-width:160px; } /* filter */
-    .annot .head .w72  { width:72px; }  /* min conf */
-    .annot .head .w64  { width:64px; }  /* nudge step */
+.annot .head input[type="text"],
+.annot .head input[type="number"] {
+  background:#0f1520; color:#e8edf2; border:1px solid #2b3949;
+  border-radius:.45rem; padding:.35rem .5rem;
+}
+.annot .head .grow { flex: 1 1 180px; min-width: 160px; }  /* filter */
+.annot .head .w72  { width: 72px; }                        /* conf min */
+.annot .head .w64  { width: 64px; }                        /* step */
 
-    .annot .head button {
-      all:unset; background:#1f2a37; border:1px solid #2b3949;
-      padding:.3rem .6rem; border-radius:.45rem; cursor:pointer;
-    }
-    .annot .head button:hover { background:#243244; }
+.annot .head button {
+  all: unset; background:#1f2a37; border:1px solid #2b3949;
+  padding:.3rem .6rem; border-radius:.45rem; cursor:pointer;
+}
+.annot .head button:hover { background:#243244; }
 
-    /* ensure the list always renders and scrolls (UPDATED) */
-    .annot .body { flex:1 1 auto; overflow:auto; padding:.6rem; display:flex; gap:.6rem; flex-direction:column; }
-    .annot .foot { margin-top:auto; padding:.6rem; border-top:1px solid #223042; display:flex; gap:.5rem; }
+/* Ensure the list renders and scrolls even when header wraps */
+.annot .body { flex: 1 1 auto; overflow:auto; padding:.6rem; display:flex; gap:.6rem; flex-direction:column; }
+.annot .foot { margin-top:auto; padding:.6rem; border-top:1px solid #223042; display:flex; gap:.5rem; }
+    .pill { font-size:.8rem; opacity:.7; }
 
-    .row { display:grid; grid-template-columns: 84px 1fr auto; gap:.4rem; background:#0e1420; border:1px solid #223042; border-radius:.5rem; padding:.5rem; align-items:center; }
-    .row select, .row input { background:#0f1520; color:#e8edf2; border:1px solid #2b3949; border-radius:.35rem; padding:.3rem .45rem; }
-    .row .id { color:var(--muted); font-size:.82rem; }
-    .row .btn { all:unset; padding:.25rem .45rem; border-radius:.35rem; background:#1f2a37; border:1px solid #2b3949; cursor:pointer; }
-    .row .btn:hover { background:#243244; }
-
-    .tip { position:absolute; left:.75rem; bottom:2.4rem; font-size:.82rem; color:var(--muted); z-index:1030; }
+    /* Nudge pad */
+    .nudge { display:grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap:2px; }
+    .nudge .sp { visibility:hidden; }
+    .nudge button { line-height:1; padding:.25rem .35rem; }
   </style>
 </head>
+
 <body>
-<div id="app">
-  <header>
-    <strong>ARK</strong>
-    <button id="btnThreat">Place Threat</button>
-    <button id="btnRoute">Compute Route</button>
-    <button id="btnReset">Reset</button>
-    <div class="spacer" id="sdkState">SDK connecting…</div>
-    <button id="btnAnnotate">Annotate</button>
-  </header>
+  <div class="app">
+    <header>
+      <span class="tag">ARK</span>
+      <button id="btnPlaceThreat">Place Threat</button>
+      <button id="btnCompute">Compute Route</button>
+      <button id="btnReset">Reset</button>
+      <span class="spacer" id="status">Loading…</span>
+      <button id="btnAnnotate">Annotate</button>
+    </header>
 
-  <div id="stage">
-    <!-- Matterport WebComponent (unchanged model id) -->
-    <matterport-viewer id="viewer" applicationKey="mp_web_component" src="https://my.matterport.com/show/?m=1gHBA08BPFZ&play=1&qs=1"></matterport-viewer>
+    <div class="stage">
+      <matterport-viewer
+        id="mpv"
+        m="1ghABoaBFPZ"
+        application-key="akqd0dp3hr9wz4eu70zd1rsab"
+        asset-base="bundle"
+        autoplay
+        play>
+      </matterport-viewer>
 
-    <div class="hud" id="hud">Idle</div>
-    <div class="tip">Tip: center the doorway (floorplan or 3D) then click <b>Add here</b>. Use ← ↑ → ↓ to nudge by the step size. Pink flash confirms changes.</div>
+      <div class="hud" id="hud">Idle</div>
 
-    <!-- Annotate panel (UPDATED header + body) -->
-    <div class="annot" id="annot">
-      <div class="head">
-        <div class="title">Annotate Doors</div>
-        <input id="annotFilter" class="grow" type="text" placeholder="filter by label/id" />
-        <input id="annotConfMin" class="w72" type="number" step="0.01" min="0" max="1" value="0" title="min confidence (0..1)" />
-        <input id="annotStep" class="w64" type="number" step="0.05" min="0.01" value="0.25" title="nudge step (meters)" />
-        <button id="annotAddHere">Add here</button>
-        <button id="annotAuto">Auto meta</button>
-        <button id="annotSave">Save</button>
-        <button id="annotClose">Close</button>
+      <!-- Annotator Panel -->
+      <div id="annot" class="annot">
+        <div class="head">
+  <div class="title">Annotate Doors</div>
+
+  <!-- Filter / Min confidence / Step (these wrap on narrow widths) -->
+  <input id="annotFilter" class="grow" type="text" placeholder="filter by label/id" />
+  <input id="annotConfMin" class="w72" type="number" step="0.01" min="0" max="1" value="0" title="min confidence (0..1)" />
+  <input id="annotStep" class="w64" type="number" step="0.05" min="0.01" value="0.25" title="nudge step (meters)" />
+
+  <!-- Actions -->
+  <button id="annotAddHere">Add here</button>
+  <button id="annotAuto">Auto meta</button>
+  <button id="annotSave">Save</button>
+  <button id="annotClose">Close</button>
+</div>
+        </div>
+
+        <div id="annotBody" class="body"></div>
+
+        <div class="foot">
+          <span class="pill">Tip: center the doorway (floorplan or 3D) then click “Add here”. Use ← ↑ → ↓ to nudge by the step size. Pink flash confirms changes.</span>
+        </div>
       </div>
-      <div class="body" id="annotBody"><!-- rows injected --></div>
-      <div class="foot" id="annotFoot"></div>
     </div>
   </div>
-</div>
 
-<script type="module">
-/* ============================================================
-   Small helpers / status
-   ============================================================ */
-const hud = document.getElementById('hud');
-const say = (m) => { hud.textContent = m; console.log('[ARK]', m); };
-const statusEl = document.getElementById('sdkState');
-
-function backendURL() {
-  const host = location.hostname;
-  if (/github\.io$/i.test(host)) return 'https://alternatively-presently-cooperative-submitting.trycloudflare.com'; // your CF tunnel
-  return `${location.protocol}//${host}:7860`;
-}
-const BACKEND_URL = backendURL();
-
-/* ============================================================
-   Connect to Matterport WebComponent
-   ============================================================ */
-const viewer = document.getElementById('viewer');
-await viewer.playingPromise;                         // ensure player is live
-const mpSdk = await viewer.getSdk();                 // MP SDK
-statusEl.textContent = 'SDK connected (WebComponent)';
-
-/* ============================================================
-   In-scene component (unchanged core; inputs/outputs defined early)
-   ============================================================ */
-const Scene = mpSdk.Scene;
-if (Scene && typeof Scene.register === 'function') {
-  class ArkRoute {
-    constructor(){
-      /* define before SDK wraps them → prevents hasOwnProperty crash */
-      this.inputs = {}; this.outputs = {}; this.events = {}; this.emits = {};
+  <script type="module">
+    // ------------ Backend resolution
+    const params = new URLSearchParams(window.location.search);
+    const API_PARAM = params.get("api");
+    const HARD_WIRE = "https://assembly-paperbacks-eddie-combat.trycloudflare.com";
+    function resolveBackend() {
+      if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
+      if (HARD_WIRE) return HARD_WIRE.replace(/\/+$/,'');
+      const { protocol, hostname } = window.location;
+      if (!/github\.io$/i.test(hostname)) return `${protocol}//${hostname}:7860`;
+      console.warn("[ARK] Backend needs an https tunnel on github.io. Use ?api=https://<your-tunnel>/");
+      return `${protocol}//${hostname}`;
     }
-    onInit(ctx){
-      const T = ctx.three;
-      const root = new T.Group();
-      this.outputs.objectRoot = root;   // set AFTER setupOutputs has run
-      _ARK.inScene = _ARK.inScene || {};
-      _ARK.inScene.available = true;
-      _ARK.inScene.THREE = T;
-      _ARK.inScene.root = root;
-      say('In-scene component initialized');
-    }
-    onTick() {}
-    onDestroy(){
-      _ARK.inScene = { available:false, root:null, THREE:null, routeMesh:null };
-    }
-  }
-  await Scene.register('arkRoute', () => new ArkRoute());
+    const BACKEND_URL = resolveBackend();
+    window.BACKEND_URL = BACKEND_URL;
 
-  // Create a node & attach our component on start
-  (async ()=>{
-    const node = await Scene.createNode();
-    try { node.addComponent('mp.lights', {}); } catch {}
-    node.addComponent('arkRoute', {});
-    await node.start();
-  })();
-} else {
-  console.warn('[ARK] Scene API not available; overlay fallback.');
-}
+    // ------------ UI helpers
+    const hud = document.getElementById('hud');
+    const statusEl = document.getElementById('status');
+    const say = (m) => { hud.textContent = m; console.log('[ARK]', m); };
+    const status = (m) => { statusEl.textContent = m; };
 
-/* ============================================================
-   App state
-   ============================================================ */
-const _ARK = {
-  inScene: { available:false, root:null, THREE:null, routeMesh:null },
-  annot: [],      // { id, type, label, x, y, conf }
-  pins: [],       // THREE.Mesh (spheres)
-  pinMat: null,
-};
-
-/* ============================================================
-   Minimal 3D line renderer (unchanged)
-   ============================================================ */
-function drawRoute3D(points /* [{x,y}] in nav meters */){
-  const S = _ARK.inScene;
-  if (!S.available) return;
-
-  const T = S.THREE, root = S.root;
-  const verts = [];
-  for (const p of points) verts.push(p.x, 0.05, p.y); // small lift to avoid z-fighting
-
-  const geo = new T.BufferGeometry();
-  geo.setAttribute('position', new T.Float32BufferAttribute(verts, 3));
-  const mat = new T.LineBasicMaterial({ color: 0x34ff7a, linewidth: 2 });
-  const line = new T.Line(geo, mat);
-
-  if (S.routeMesh) root.remove(S.routeMesh);
-  root.add(line); S.routeMesh = line;
-
-  say('Route rendered (3D)');
-}
-
-/* ============================================================
-   Buttons
-   ============================================================ */
-document.getElementById('btnReset').addEventListener('click', ()=>{
-  if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
-    _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
-    _ARK.inScene.routeMesh = null;
-  }
-  say('Reset');
-});
-
-document.getElementById('btnThreat').addEventListener('click', async ()=>{
-  // Demo: place threat at camera nav position
-  const pose = await mpSdk.Camera.getPose();
-  const nav = { x: pose.position.x, y: pose.position.z }; // MP uses y-up; navgraph uses x,z
-  _ARK.lastThreat = { x: nav.x, y: nav.y };
-  console.log('[ARK] Threat set at camera (nav):', nav);
-});
-
-document.getElementById('btnRoute').addEventListener('click', async ()=>{
-  try {
-    const pose = await mpSdk.Camera.getPose();
-    const nav = { x: pose.position.x, y: pose.position.z };
-    const body = {
-      start: nav,
-      threat: _ARK.lastThreat || nav,
-      prefer: "exit",                 // exits first, then shelters
-      robust_k: 3,                    // small uncertainty sweep
+    // In-scene state
+    const _ARK = {
+      inScene: { available:false, THREE:null, root:null, routeMesh:null, pinsRoot:null },
+      camera: null,
+      threatWorld: null,
+      threatNav:   null,
+      meta: null,
+      annot: [],         // {id,label,x,y,type, confidence?, width_m?}
+      navBounds: null
     };
-    const res = await fetch(`${BACKEND_URL}/route_safe`, {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
-    });
-    const js = await res.json();
-    console.log('[ARK route] decision:', js.decision, js.terms);
-    drawRoute3D(js.path);
-  } catch (err) {
-    console.error(err); say('Route failed');
-  }
-});
 
-/* ============================================================
-   Annotate UI
-   ============================================================ */
-const annot = document.getElementById('annot');
-const annotFilter = document.getElementById('annotFilter');
-const annotConfMin = document.getElementById('annotConfMin');
-const annotStep = document.getElementById('annotStep');
-const annotBody = document.getElementById('annotBody');
+    // --------- Coordinate helpers (nav meters -> world)
+    const ROUTE_Y = 0.10; // 10 cm above floor
+    const worldToNav = (p) => ({ x: p.x, y: p.z });
+    function v3(x,y,z) { const T = _ARK.inScene.THREE; return new T.Vector3(x,y,z); }
+    function navToWorld(p) { return v3(p.x, ROUTE_Y, p.y); }
 
-document.getElementById('btnAnnotate').addEventListener('click', openAnnotator);
-document.getElementById('annotClose').addEventListener('click', ()=>annot.classList.remove('show'));
-document.getElementById('annotSave').addEventListener('click', saveDestinations);
-document.getElementById('annotAuto').addEventListener('click', loadAutoMeta);
-document.getElementById('annotAddHere').addEventListener('click', addHere);
+    // --------- Route (Tube)
+    function renderRoute3D(points) {
+      if (!_ARK.inScene.available) throw new Error("In-scene not available");
+      const T = _ARK.inScene.THREE;
+      const root = _ARK.inScene.root;
 
-/* show then render to avoid rendering into display:none */
-function openAnnotator(){
-  annot.classList.add('show');
-  renderAnnotList();
-  buildPins();
-}
+      if (_ARK.inScene.routeMesh) {
+        _ARK.inScene.routeMesh.geometry?.dispose?.();
+        _ARK.inScene.routeMesh.material?.dispose?.();
+        root.remove(_ARK.inScene.routeMesh);
+        _ARK.inScene.routeMesh = null;
+      }
+      if (!Array.isArray(points) || points.length < 2) throw new Error("renderRoute3D: invalid points");
 
-/* rows */
-function renderAnnotList(){
-  const q = (annotFilter.value||'').trim().toLowerCase();
-  const confMin = Number(annotConfMin.value||0);
+      const pts = points.map(p => navToWorld({x:p.x, y:p.y}));
+      const curve = new T.CatmullRomCurve3(pts, false, "centripetal", 0.35);
+      const tubularSegments = Math.max(100, pts.length * 20);
+      const radius = 0.06, radialSegments = 12;
+      const geo = new T.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
+      const mat = new T.MeshBasicMaterial({ color: 0x22ff88, depthTest: false, transparent: false });
+      const mesh = new T.Mesh(geo, mat);
+      root.add(mesh);
+      _ARK.inScene.routeMesh = mesh;
+    }
 
-  annotBody.innerHTML = '';
-  _ARK.annot.forEach((d,idx)=>{
-    if (q && !(String(d.id).toLowerCase().includes(q) || (d.label||'').toLowerCase().includes(q))) return;
-    if (d.conf != null && d.conf < confMin) return;
+    // --------- Door Pins for Annotator
+    function ensurePinsRoot() {
+      const T = _ARK.inScene.THREE;
+      if (!_ARK.inScene.pinsRoot) {
+        _ARK.inScene.pinsRoot = new T.Group();
+        _ARK.inScene.root.add(_ARK.inScene.pinsRoot);
+      }
+    }
+    function clearPins() {
+      const root = _ARK.inScene.pinsRoot;
+      if (!root) return;
+      while (root.children.length) {
+        const c = root.children.pop();
+        c.geometry?.dispose?.(); c.material?.dispose?.();
+      }
+    }
+    function colorForType(type) {
+      if (type === "exit")    return 0x2ee06e; // green
+      if (type === "shelter") return 0x5ea7ff; // blue
+      return 0xcccccc; // gray unlabeled
+    }
+    function getPinMesh(i) {
+      const root = _ARK.inScene.pinsRoot; if (!root) return null;
+      return root.children.find(c => c.userData.recIndex === i) || null;
+    }
+    function movePin(i, dx, dy) {
+      const rec = _ARK.annot[i]; if (!rec) return;
+      rec.x += dx; rec.y += dy;
+      const m = getPinMesh(i);
+      if (m) m.position.copy(navToWorld({x: rec.x, y: rec.y}));
+      flashPinColor(i, 0xff66cc, 500);
+    }
+    function buildPins() {
+      if (!_ARK.inScene.available || !_ARK.annot.length) return;
+      ensurePinsRoot(); clearPins();
 
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.innerHTML = `
-      <select data-k="type">
-        <option value="None"${d.type==='None'?' selected':''}>None</option>
-        <option value="Exit"${d.type==='Exit'?' selected':''}>Exit</option>
-        <option value="Shelter"${d.type==='Shelter'?' selected':''}>Shelter</option>
-      </select>
-      <input data-k="label" type="text" placeholder="Label (e.g., Exit for Room 203)" value="${d.label||''}" />
-      <div class="id">#${d.id} · (${d.x.toFixed(2)}, ${d.y.toFixed(2)})</div>
-    `;
-    row.querySelectorAll('select,input').forEach(el=>{
-      el.addEventListener('input', (e)=>{
-        const k = e.target.getAttribute('data-k');
-        _ARK.annot[idx][k] = e.target.value;
-      });
-    });
-    annotBody.appendChild(row);
-  });
-}
+      const T = _ARK.inScene.THREE;
+      const root = _ARK.inScene.pinsRoot;
 
-/* build pink pin meshes */
-function buildPins(){
-  const S = _ARK.inScene;
-  if (!S.available) return;
-  const T = S.THREE, root = S.root;
+      const confMin = parseFloat(document.getElementById('annotConfMin').value || "0") || 0;
 
-  // clear old
-  _ARK.pins.forEach(p => root.remove(p));
-  _ARK.pins.length = 0;
+      for (let i = 0; i < _ARK.annot.length; i++) {
+        const rec = _ARK.annot[i];
+        if (rec.confidence != null && rec.confidence < confMin) continue;
+        const mat = new T.MeshBasicMaterial({ color: colorForType(rec.type), depthTest:false });
+        const geo = new T.SphereGeometry(0.08, 16, 12);
+        const m = new T.Mesh(geo, mat);
+        m.position.copy(navToWorld({x:rec.x, y:rec.y}));
+        m.userData.recIndex = i;
+        root.add(m);
+      }
+    }
+    function flashPin(i) { flashPinColor(i, 0xff3366, 900); }
+    function flashPinColor(i, hex, ms=1200) {
+      const root = _ARK.inScene.pinsRoot; if (!root) return;
+      const m = root.children.find(c => c.userData.recIndex === i);
+      if (!m) return;
+      const orig = m.material.color.getHex();
+      m.material.color.setHex(hex);
+      setTimeout(() => m.material.color.setHex(orig), ms);
+    }
+    function updatePinColor(i) {
+      const root = _ARK.inScene.pinsRoot; if (!root) return;
+      const m = root.children.find(c => c.userData.recIndex === i);
+      if (m) m.material.color.setHex(colorForType(_ARK.annot[i].type));
+    }
 
-  if (!_ARK.pinMat) _ARK.pinMat = new T.MeshStandardMaterial({ color: 0xff66cc, emissive: 0x441122, roughness:.8, metalness:.2 });
+    // --------- Annotator UI
+    const annot = document.getElementById('annot');
+    const annotBody = document.getElementById('annotBody');
+    const annotFilter = document.getElementById('annotFilter');
+    const annotConfMin = document.getElementById('annotConfMin');
+    const annotStepEl = document.getElementById('annotStep');
+    const annotAutoBtn = document.getElementById('annotAuto');
+    const annotAddHereBtn = document.getElementById('annotAddHere');
 
-  for (const d of _ARK.annot){
-    const geo = new T.SphereGeometry(0.12, 20, 16);
-    const mesh = new T.Mesh(geo, _ARK.pinMat);
-    mesh.position.set(d.x, 0.12, d.y);
-    _ARK.pins.push(mesh); root.add(mesh);
-  }
-}
+    async function openAnnotator() {
+      const meta = await (await fetch(`${BACKEND_URL}/site/meta`)).json();
+      _ARK.meta = meta;
 
-/* small flash helper */
-function flashPinColor(idx, color, ms=800){
-  const p = _ARK.pins[idx]; if (!p) return;
-  const old = _ARK.pinMat.color.getHex();
-  _ARK.pinMat.color.setHex(color);
-  setTimeout(()=>_ARK.pinMat.color.setHex(old), ms);
-}
+      _ARK.annot = [];         // start only from saved items
+      clearPins();
 
-/* ADD HERE — UPDATED tail to guarantee the row appears */
-async function addHere(){
-  try{
-    const pose = await mpSdk.Camera.getPose();
-    // nav meters: use x / z
-    const nav = { x: pose.position.x, y: pose.position.z };
-    const id = Date.now();
-    _ARK.annot.push({ id, type:'None', label:'', x:nav.x, y:nav.y, conf:null });
+      for (const ex of (meta.exits || []))
+        _ARK.annot.push({ id: ex.id, label: ex.label, x: ex.x, y: ex.y, type: 'exit' });
+      for (const sh of (meta.shelters || []))
+        _ARK.annot.push({ id: sh.id, label: sh.label, x: sh.x, y: sh.y, type: 'shelter' });
 
-    const idx = _ARK.annot.length - 1;
+      try { _ARK.navBounds = await (await fetch(`${BACKEND_URL}/site/nav_bounds`)).json(); }
+      catch { _ARK.navBounds = null; }
 
-    // render list & pins
-    renderAnnotList();
-    buildPins();
-
-    // If filters hide the fresh row, clear them and re-render
-    const body = document.getElementById('annotBody');
-    if (!body || body.children.length === 0){
-      annotFilter.value = '';
-      annotConfMin.value = '0';
+      annot.classList.add('show');
       renderAnnotList();
+      buildPins();
     }
 
-    flashPinColor(idx, 0xff66cc, 1200);
-    say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
-  }catch(err){
-    console.error(err); say('Add failed');
-  }
-}
+    function renderAnnotList() {
+      const q = (annotFilter.value || "").toLowerCase().trim();
+      const confMin = parseFloat(annotConfMin.value || "0") || 0;
 
-/* Load auto doors (still optional; filters out-of-bounds if any) */
-async function loadAutoMeta(){
-  try{
-    const res = await fetch('./doors_auto.json', { cache:'no-store' });
-    if (!res.ok) throw new Error(`doors_auto.json ${res.status}`);
-    const js = await res.json();
-    let added = 0;
-    for (const d of js){
-      if (!isFinite(d.x) || !isFinite(d.y)) continue;
-      _ARK.annot.push({ id: d.id ?? Date.now()+Math.random()*1000|0, type:'None', label: d.label ?? '', x:d.x, y:d.y, conf:d.conf ?? null });
-      added++;
+      annotBody.innerHTML = "";
+      _ARK.annot.forEach((rec, i) => {
+        if (rec.confidence != null && rec.confidence < confMin) return;
+        if (q && !(rec.id?.toLowerCase().includes(q) || rec.label?.toLowerCase().includes(q))) return;
+
+        const row = document.createElement('div');
+        row.className = 'row';
+
+        const sel = document.createElement('select');
+        sel.className = 'type';
+        sel.innerHTML = `
+          <option value="">None</option>
+          <option value="exit">Exit</option>
+          <option value="shelter">Shelter</option>`;
+        sel.value = rec.type || "";
+        sel.onchange = () => { 
+          rec.type = sel.value; 
+          updatePinColor(i);
+          if (rec.type) flashPinColor(i, 0xff66cc, 1200);
+        };
+
+        const lab = document.createElement('input');
+        lab.className = 'lbl';
+        lab.placeholder = 'Label (e.g., Exit for Room 203)';
+        lab.value = rec.label || "";
+        lab.oninput = () => rec.label = lab.value;
+
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        if (rec.width_m != null || rec.confidence != null) {
+          const inch = rec.width_m != null ? Math.round(rec.width_m * 39.37) : null;
+          const conf = rec.confidence != null ? rec.confidence.toFixed(2) : null;
+          meta.textContent = `${inch ? `${inch}"` : ''}${inch && conf ? ' · ' : ''}${conf ? `conf ${conf}` : ''}`;
+        } else {
+          meta.textContent = '';
+        }
+
+        const show = document.createElement('button');
+        show.textContent = 'Show';
+        show.onclick = () => flashPin(i);
+
+        // Nudge pad: ← ↑ → ↓ with configurable step
+        const nudge = document.createElement('div');
+        nudge.className = 'nudge';
+        const stepFn = () => (+annotStepEl.value || 0.25);
+
+        const mk = (txt, dx, dy) => {
+          const b = document.createElement('button');
+          b.textContent = txt;
+          b.onclick = () => movePin(i, dx * stepFn(), dy * stepFn());
+          return b;
+        };
+        // layout:
+        // [sp][↑][sp]
+        // [←][•][→]
+        // [sp][↓][sp]
+        nudge.appendChild(document.createElement('div')).className = 'sp';
+        nudge.appendChild(mk('↑', 0, -1));
+        nudge.appendChild(document.createElement('div')).className = 'sp';
+        nudge.appendChild(mk('←', -1, 0));
+        const dot = document.createElement('button'); dot.textContent = '•'; dot.title = 'flash';
+        dot.onclick = () => flashPin(i);
+        nudge.appendChild(dot);
+        nudge.appendChild(mk('→', +1, 0));
+        nudge.appendChild(document.createElement('div')).className = 'sp';
+        nudge.appendChild(mk('↓', 0, +1));
+        nudge.appendChild(document.createElement('div')).className = 'sp';
+
+        row.appendChild(sel);
+        row.appendChild(lab);
+        row.appendChild(meta);
+        row.appendChild(show);
+        row.appendChild(nudge);
+        annotBody.appendChild(row);
+      });
     }
-    say(`Auto meta: ${added} added`);
-    renderAnnotList(); buildPins();
-  } catch (err) {
-    console.warn(err); say('Auto meta failed');
-  }
-}
 
-/* Save to backend */
-async function saveDestinations(){
-  try {
-    const body = { items: _ARK.annot };
-    const res = await fetch(`${BACKEND_URL}/save_destinations`, {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+    annotFilter.addEventListener('input', () => { renderAnnotList(); buildPins(); });
+    annotConfMin.addEventListener('input', () => { renderAnnotList(); buildPins(); });
+    document.getElementById('annotClose').onclick = () => annot.classList.remove('show');
+
+    document.getElementById('annotSave').onclick = async () => {
+      const exits    = _ARK.annot.filter(r => r.type === "exit").map(({id,label,x,y}) => ({id,label,x,y}));
+      const shelters = _ARK.annot.filter(r => r.type === "shelter").map(({id,label,x,y}) => ({id,label,x,y}));
+      const res = await fetch(`${BACKEND_URL}/admin/save_destinations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exits, shelters })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Save failed");
+      say(`Saved: ${data.exits} exits, ${data.shelters} shelters`);
+      annot.classList.remove('show');
+    };
+
+    // ---- Optional auto meta (manual only)
+    async function loadAutoMeta(silent=false) {
+      const resp = await fetch(`${BACKEND_URL}/site/doors_auto`);
+      const j = await resp.json();
+      const src = Array.isArray(j) ? j : (j.doors || []);
+
+      let merged = 0, added = 0, skipped = 0;
+      const R = 0.35;
+
+      function inBounds(x, y) {
+        const b = _ARK.navBounds;
+        if (!b || !b.min || !b.max) return true;
+        const m = 5.0;
+        return (x >= b.min[0]-m && x <= b.max[0]+m && y >= b.min[1]-m && y <= b.max[1]+m);
+      }
+      function nnIdx(x, y) {
+        let best = -1, bd = R + 1;
+        for (let i = 0; i < _ARK.annot.length; i++) {
+          const dx = _ARK.annot[i].x - x, dy = _ARK.annot[i].y - y;
+          const d  = Math.hypot(dx, dy);
+          if (d < bd) { bd = d; best = i; }
+        }
+        return (bd <= R) ? best : -1;
+      }
+
+      for (const d of src) {
+        const p = d.pos || d.pos_nav || d.nav || d.xy;
+        if (!p || p.length < 2) continue;
+
+        const x = +p[0], y = +p[1];
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !inBounds(x, y)) { skipped++; continue; }
+
+        const i = nnIdx(x, y);
+
+        const width_m    = d.width_m ?? d.width ?? null;
+        const confidence = d.confidence ?? d.conf ?? d.score ?? null;
+
+        if (i >= 0) {
+          if (width_m != null)     _ARK.annot[i].width_m = +width_m;
+          if (confidence != null)  _ARK.annot[i].confidence = +confidence;
+          if (!_ARK.annot[i].label && width_m != null) {
+            const inches = Math.round(+width_m * 39.37);
+            _ARK.annot[i].label = `Door (${inches}")`;
+          }
+          merged++;
+        } else {
+          const inches = width_m != null ? Math.round(+width_m * 39.37) : null;
+          _ARK.annot.push({
+            id: `cand_${Date.now()}_${added}`,
+            label: inches ? `Door (${inches}")` : '',
+            x, y,
+            type: '',
+            width_m: width_m ?? undefined,
+            confidence: confidence ?? undefined
+          });
+          added++;
+        }
+      }
+
+      if (!silent) say(`Auto meta: ${merged} merged, ${added} added, ${skipped} skipped`);
+      renderAnnotList();
+      buildPins();
+    }
+    annotAutoBtn.addEventListener('click', () => loadAutoMeta(false).catch(console.error));
+
+    // ---- Add here: robust raycast to floor plane
+    annotAddHereBtn.addEventListener('click', () => {
+      try {
+        if (!_ARK.inScene.available || !_ARK.camera?.position) {
+          say("Need camera pose before adding"); 
+          return;
+        }
+        const T = _ARK.inScene.THREE;
+
+        // Pose from SDK is plain numbers, convert to THREE types
+        const p = _ARK.camera.position || {};
+        const r = _ARK.camera.rotation || {};
+
+        const camPos = new T.Vector3(+p.x || 0, +p.y || 0, +p.z || 0);
+
+        let q = new T.Quaternion();
+        if (typeof r.w === "number") {
+          q.set(+r.x || 0, +r.y || 0, +r.z || 0, +r.w || 1);
+        } else {
+          const e = new T.Euler(+r.x || 0, +r.y || 0, +r.z || 0, "XYZ");
+          q.setFromEuler(e);
+        }
+
+        const forward = new T.Vector3(0, 0, -1).applyQuaternion(q).normalize();
+
+        let hit;
+        if (Math.abs(forward.y) > 1e-4) {
+          const t = (ROUTE_Y - camPos.y) / forward.y;
+          if (isFinite(t) && t > 0) hit = camPos.clone().addScaledVector(forward, t);
+          else hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
+        } else {
+          hit = new T.Vector3(camPos.x, ROUTE_Y, camPos.z);
+        }
+
+        const nav = worldToNav(hit);
+        const idx = _ARK.annot.length;
+        _ARK.annot.push({ id: `manual_${Date.now()}`, label: '', x: nav.x, y: nav.y, type: '' });
+
+        renderAnnotList();
+        buildPins();
+        flashPinColor(idx, 0xff66cc, 1200);
+        say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
+      } catch (e) {
+        console.error(e);
+        say("Add failed");
+      }
     });
-    if (!res.ok) throw new Error(`${res.status}`);
-    say('Saved');
-  } catch (err) {
-    console.error(err); say('Save failed');
-  }
-}
-</script>
+
+    // ------------ Buttons
+    document.getElementById('btnReset').addEventListener('click', () => {
+      if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
+        _ARK.inScene.routeMesh.geometry?.dispose?.();
+        _ARK.inScene.routeMesh.material?.dispose?.();
+        _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
+        _ARK.inScene.routeMesh = null;
+      }
+      _ARK.threatWorld = null;
+      _ARK.threatNav = null;
+      say('Reset');
+    });
+
+    document.getElementById('btnPlaceThreat').addEventListener('click', () => {
+      if (!_ARK.camera?.position) { say("No camera pose yet"); return; }
+      const pos = _ARK.camera.position;
+      _ARK.threatWorld = { x: pos.x, y: pos.y, z: pos.z };
+      _ARK.threatNav   = worldToNav(pos);
+      say(`Threat set at camera (nav): (${_ARK.threatNav.x.toFixed(2)}, ${_ARK.threatNav.y.toFixed(2)})`);
+    });
+
+    document.getElementById('btnCompute').addEventListener('click', async () => {
+      try {
+        if (!_ARK.inScene.available) throw new Error("In-scene not available");
+        if (!_ARK.camera?.position) throw new Error("No camera pose yet");
+        if (!_ARK.threatNav) throw new Error("No threat set (click 'Place Threat' first)");
+
+        const startNav = worldToNav(_ARK.camera.position);
+        const threatNav = _ARK.threatNav;
+
+        const res = await fetch(`${BACKEND_URL}/route/auto`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            start:  { x: startNav.x,  y: startNav.y  },
+            threat: { x: threatNav.x, y: threatNav.y },
+            k: 3, dx: 1.5,
+            weights: { alpha: 1.0, beta: 12.0, gamma: 2.0, delta: 0.0 }
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+
+        const pts = Array.isArray(data.route) ? data.route.map(([x,y]) => ({ x, y }))
+                  : Array.isArray(data.points) ? data.points
+                  : null;
+
+        if (!pts || pts.length < 2) throw new Error("Router returned no usable points");
+
+        renderRoute3D(pts);
+        console.log("[ARK route] decision:", data.decision, "terms:", data.terms || "(n/a)");
+        say("Route rendered (3D)");
+      } catch (err) {
+        console.error(err);
+        say(`Error: ${err.message || err}`);
+        throw err;
+      }
+    });
+
+    // Annotate toggle
+    document.getElementById('btnAnnotate').onclick = () => {
+      if (!_ARK.inScene.available) { say("In-scene not available"); return; }
+      openAnnotator().catch(e => { console.error(e); say("Annotator failed"); });
+    };
+
+    // ------------ Bootstrap
+    const viewer = document.getElementById('mpv');
+    (async () => {
+      await customElements.whenDefined('matterport-viewer');
+      const mpSdk = await viewer.playingPromise;
+      status("SDK connected (WebComponent)");
+
+      const S = mpSdk.Scene;
+      if (S && typeof S.register==='function') {
+        class ArkRoute {
+          constructor() { this.inputs = { enabled: true }; this.outputs = {}; this.events = {}; this.emits = {}; }
+          onInit() {
+            const T = (this && this.THREE) || (typeof window !== "undefined" && window.THREE);
+            if (!T) throw new Error("THREE not available from Scene");
+            const root = new T.Group();
+            this.outputs.objectRoot = root;
+
+            _ARK.inScene.available = true;
+            _ARK.inScene.THREE = T;
+            _ARK.inScene.root = root;
+
+            say("In-scene component initialized");
+          }
+          onTick() {}
+          onDestroy() {
+            _ARK.inScene.available = false;
+            if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
+              _ARK.inScene.routeMesh.geometry?.dispose?.();
+              _ARK.inScene.routeMesh.material?.dispose?.();
+              _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
+            }
+            if (_ARK.inScene.pinsRoot && _ARK.inScene.root) {
+              _ARK.inScene.root.remove(_ARK.inScene.pinsRoot);
+              _ARK.inScene.pinsRoot = null;
+            }
+            _ARK.inScene.root = null;
+            _ARK.inScene.THREE = null;
+            _ARK.inScene.routeMesh = null;
+          }
+        }
+
+        await S.register("arkRoute", () => new ArkRoute());
+        const node = await S.createNode();
+        try { node.addComponent("mp.lights", {}); } catch {}
+        node.addComponent("arkRoute", {});
+        await node.start();
+      } else {
+        throw new Error("Scene API not available");
+      }
+
+      try { mpSdk.Camera.pose.subscribe((p) => { _ARK.camera = p; }); }
+      catch (err) { console.warn("[ARK] pose.subscribe failed", err); }
+    })().catch(err => { console.error("[ARK] bootstrap failed:", err); throw err; });
+  </script>
 </body>
 </html>
