@@ -132,7 +132,7 @@
     // ------------ Backend resolution
     const params = new URLSearchParams(window.location.search);
     const API_PARAM = params.get("api");
-    const HARD_WIRE = "https://elderly-gras-fax-varied.trycloudflare.com";
+    const HARD_WIRE = "https://secondary-especially-will-hampshire.trycloudflare.com";
     function resolveBackend() {
       if (API_PARAM) return API_PARAM.replace(/\/+$/,'');
       if (HARD_WIRE) return HARD_WIRE.replace(/\/+$/,'');
@@ -487,13 +487,24 @@
         }
 
         const nav = worldToNav(hit);
-        const idx = _ARK.annot.length;
-        _ARK.annot.push({ id: `manual_${Date.now()}`, label: '', x: nav.x, y: nav.y, type: '' });
+        const idx = _ARK.annot.length - 1;
 
-        renderAnnotList();
-        buildPins();
-        flashPinColor(idx, 0xff66cc, 1200);
-        say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
+         // (Re)render list & pins
+            renderAnnotList();
+            buildPins();
+
+        // If filters hid the freshly added row, clear them and re-render
+           const body = document.getElementById('annotBody');
+           if (!body || body.children.length === 0) {
+           annotFilter.value = '';
+           annotConfMin.value = '0';
+          renderAnnotList();
+        }
+
+        // Flash the new pin for feedback
+         flashPinColor(idx, 0xff66cc, 1200);
+         say(`Added pin at (${nav.x.toFixed(2)}, ${nav.y.toFixed(2)})`);
+
       } catch (e) {
         console.error(e);
         say("Add failed");
