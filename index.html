@@ -152,9 +152,9 @@
         const startNav  = worldToNav(_ARK.camera.position);
         const threatNav = _ARK.threatNav;
 
-        // 15s client-side cap so UI never hangs
+        // 30s client-side cap so UI doesn't abort too early
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 15000);
+        const timer = setTimeout(() => controller.abort(), 30000);
 
         const res = await fetch(`${BACKEND_URL}/route/auto`, {
           method: "POST",
@@ -162,7 +162,8 @@
           body: JSON.stringify({
             start:  { x: startNav.x,  y: startNav.y  },
             threat: { x: threatNav.x, y: threatNav.y },
-            k: 3, dx: 1.5,
+            k: 1,            // lighter search
+            dx: 2.5,         // coarser step
             weights: { alpha: 1.0, beta: 12.0, gamma: 2.0, delta: 0.0 }
           }),
           signal: controller.signal
