@@ -26,11 +26,17 @@
     html, body { height: 100%; margin: 0; background: #0b0f14; color: #e8edf2; font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
     .app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
     header { display: flex; gap: .5rem; align-items: center; padding: .75rem 1rem; background: #11161d; border-bottom: 1px solid #1f2a37; }
-    header .tag { font-weight: 600; opacity: .85; }
+    header .tag { font-weight: 700; letter-spacing:.06em; opacity: .9; }
     header button { all: unset; background: #1f2a37; padding: .45rem .7rem; border-radius: .5rem; cursor: pointer; border: 1px solid #2b3949; }
     header button:hover { background:#243244; }
     header button:active { background:#1b2633; }
-    header .spacer { flex: 1 1 auto; opacity:.6; font-size:.9rem; }
+    header button[disabled] { opacity: .45; cursor: not-allowed; filter: grayscale(0.3); }
+    header .spacer { flex: 1 1 auto; }
+    header .status { font-size:.9rem; opacity:.85; }
+    header .dot { display:inline-block; width:.6rem; height:.6rem; border-radius:50%; margin-right:.4rem; vertical-align:middle; background:#596b7d; }
+    header .dot.ok { background:#34d399; }
+    header .dot.warm { background:#f59e0b; }
+    header .dot.err { background:#ef4444; }
 
     .stage { position: relative; height: 100%; overflow: hidden; background: #000; }
     matterport-viewer { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -42,10 +48,11 @@
   <div class="app">
     <header>
       <span class="tag">ARK</span>
-      <button id="btnPlaceThreat">Place Threat</button>
-      <button id="btnCompute">Compute Route</button>
+      <button id="btnPlaceThreat" disabled>Place Threat</button>
+      <button id="btnCompute" disabled>Compute Route</button>
       <button id="btnReset">Reset</button>
-      <span class="spacer" id="status">Loading…</span>
+      <span class="spacer"></span>
+      <span class="status" id="status"><span class="dot warm"></span>Connecting…</span>
     </header>
 
     <div class="stage">
@@ -78,16 +85,45 @@
     // ------------ UI helpers
     const hud = document.getElementById('hud');
     const statusEl = document.getElementById('status');
+    const btnThreat  = document.getElementById('btnPlaceThreat');
+    const btnCompute = document.getElementById('btnCompute');
+    const btnReset   = document.getElementById('btnReset');
+
     const say = (m) => { hud.textContent = m; console.log('[ARK]', m); };
-    const status = (m) => { statusEl.textContent = m; };
+    const setStatus = (html) => { statusEl.innerHTML = html; };
 
     // In-scene state
     const _ARK = {
       inScene: { available:false, THREE:null, root:null, routeMesh:null },
       camera: null,
       threatWorld: null,
-      threatNav:   null
+      threatNav:   null,
+      backendReady: false
     };
+
+    // --------- Health poll
+    async function pollHealth() {
+      try {
+        const r = await fetch(`${BACKEND_URL}/health`, { cache: 'no-store' });
+        const j = await r.json();
+        const dot = j.ready ? 'ok' : (j.load?.phase ? 'warm' : 'err');
+        const msg = j.ready
+          ? `Ready • nodes: ${j.nodes} • walls: ${j.walls}${j.obj_selected ? ` • src: ${j.obj_selected.split('/').pop()}`:''}`
+          : (j.load?.phase
+              ? `Warming • ${j.load.phase}${typeof j.load.percent==='number' ? ` ${j.load.percent}%` : ''}`
+              : `Unavailable`);
+        setStatus(`<span class="dot ${dot}"></span>${msg}`);
+        _ARK.backendReady = !!j.ready;
+        btnCompute.disabled = !(_ARK.backendReady && _ARK.inScene.available);
+        btnThreat.disabled  = !(_ARK.inScene.available);
+      } catch (e) {
+        setStatus(`<span class="dot err"></span>Health error`);
+        _ARK.backendReady = false;
+        btnCompute.disabled = true;
+      }
+    }
+    setInterval(pollHealth, 1000);
+    pollHealth();
 
     // --------- Coordinate helpers (nav meters <-> world)
     const ROUTE_Y = 0.10; // 10 cm above floor
@@ -118,7 +154,7 @@
     }
 
     // ------------ Buttons
-    document.getElementById('btnReset').onclick = () => {
+    btnReset.onclick = () => {
       if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
         _ARK.inScene.routeMesh.geometry?.dispose?.();
         _ARK.inScene.routeMesh.material?.dispose?.();
@@ -130,7 +166,7 @@
       say('Reset');
     };
 
-    document.getElementById('btnPlaceThreat').onclick = () => {
+    btnThreat.onclick = () => {
       if (!_ARK.camera?.position) { say("No camera pose yet"); return; }
       const pos = _ARK.camera.position;
       _ARK.threatWorld = { x: pos.x, y: pos.y, z: pos.z };
@@ -141,18 +177,19 @@
     // ---- Single-flight + timeout to prevent request storms
     let _busy = false;
 
-    document.getElementById('btnCompute').onclick = async () => {
+    btnCompute.onclick = async () => {
       if (_busy) { say('Already computing…'); return; }
       _busy = true;
       try {
         if (!_ARK.inScene.available) throw new Error("In-scene not available");
         if (!_ARK.camera?.position) throw new Error("No camera pose yet");
         if (!_ARK.threatNav) throw new Error("No threat set (click 'Place Threat' first)");
+        if (!_ARK.backendReady) throw new Error("Backend not ready yet");
 
         const startNav  = worldToNav(_ARK.camera.position);
         const threatNav = _ARK.threatNav;
 
-        // 30s client-side cap so UI doesn't abort too early
+        // 30s client-side cap (server caps internally at 5s)
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 30000);
 
@@ -161,10 +198,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             start:  { x: startNav.x,  y: startNav.y  },
-            threat: { x: threatNav.x, y: threatNav.y },
-            k: 1,            // lighter search
-            dx: 2.5,         // coarser step
-            weights: { alpha: 1.0, beta: 12.0, gamma: 2.0, delta: 0.0 }
+            threat: { x: threatNav.x, y: threatNav.y }
           }),
           signal: controller.signal
         }).finally(() => clearTimeout(timer));
@@ -191,7 +225,7 @@
     (async () => {
       await customElements.whenDefined('matterport-viewer');
       const mpSdk = await viewer.playingPromise;
-      status("SDK connected (WebComponent)");
+      setStatus('<span class="dot warm"></span>SDK connected (WebComponent)');
 
       const S = mpSdk.Scene;
       if (!S || typeof S.register !== 'function') throw new Error("Scene API not available");
@@ -205,6 +239,9 @@
           this.outputs.objectRoot = root;
           _ARK.inScene = { available:true, THREE:T, root, routeMesh:null };
           say("In-scene component initialized");
+          // enable UI once scene is up; compute is additionally gated by backendReady
+          btnThreat.disabled = false;
+          btnCompute.disabled = !_ARK.backendReady;
         }
         onTick() {}
         onDestroy() {
@@ -215,6 +252,7 @@
             _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
           }
           _ARK.inScene = { available:false, THREE:null, root:null, routeMesh:null };
+          btnThreat.disabled = true; btnCompute.disabled = true;
         }
       }
 
