@@ -50,6 +50,7 @@
       <span class="tag">ARK</span>
       <button id="btnPlaceThreat" disabled>Place Threat</button>
       <button id="btnCompute" disabled>Compute Route</button>
+      <button id="btnToggleTruth" disabled>Truth Mode: Off</button>
       <button id="btnReset">Reset</button>
       <span class="spacer"></span>
       <span class="status" id="status"><span class="dot warm"></span>Connecting…</span>
@@ -87,6 +88,7 @@
     const statusEl = document.getElementById('status');
     const btnThreat  = document.getElementById('btnPlaceThreat');
     const btnCompute = document.getElementById('btnCompute');
+    const btnTruth   = document.getElementById('btnToggleTruth');
     const btnReset   = document.getElementById('btnReset');
 
     const say = (m) => { hud.textContent = m; console.log('[ARK]', m); };
@@ -98,7 +100,8 @@
       camera: null,
       threatWorld: null,
       threatNav:   null,
-      backendReady: false
+      backendReady: false,
+      truthMode: false,   // NEW: line vs tube
     };
 
     // --------- Health poll
@@ -108,18 +111,21 @@
         const j = await r.json();
         const dot = j.ready ? 'ok' : (j.load?.phase ? 'warm' : 'err');
         const msg = j.ready
-          ? `Ready • nodes: ${j.nodes} • walls: ${j.walls}${j.obj_selected ? ` • src: ${j.obj_selected.split('/').pop()}`:''}`
+          ? `Ready • nodes: ${j.nodes} • walls: ${j.walls}${j.obj_selected ? ` • src: ${String(j.obj_selected).split('/').pop()}`:''}`
           : (j.load?.phase
               ? `Warming • ${j.load.phase}${typeof j.load.percent==='number' ? ` ${j.load.percent}%` : ''}`
               : `Unavailable`);
         setStatus(`<span class="dot ${dot}"></span>${msg}`);
         _ARK.backendReady = !!j.ready;
-        btnCompute.disabled = !(_ARK.backendReady && _ARK.inScene.available);
-        btnThreat.disabled  = !(_ARK.inScene.available);
+        const uiUp = _ARK.inScene.available;
+        btnCompute.disabled = !(j.ready && uiUp);
+        btnTruth.disabled = !(j.ready && uiUp);
+        btnThreat.disabled  = !uiUp;
       } catch (e) {
         setStatus(`<span class="dot err"></span>Health error`);
         _ARK.backendReady = false;
         btnCompute.disabled = true;
+        btnTruth.disabled = true;
       }
     }
     setInterval(pollHealth, 1000);
@@ -130,19 +136,28 @@
     const worldToNav = (p) => ({ x: p.x, y: p.z });
     const navToWorld = (p) => new _ARK.inScene.THREE.Vector3(p.x, ROUTE_Y, p.y);
 
-    // --------- Route (Tube)
-    function renderRoute3D(points) {
-      if (!_ARK.inScene.available) throw new Error("In-scene not available");
-      const T = _ARK.inScene.THREE, root = _ARK.inScene.root;
-
-      if (_ARK.inScene.routeMesh) {
+    // --------- Route renderers
+    function clearRoute() {
+      if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
         _ARK.inScene.routeMesh.geometry?.dispose?.();
         _ARK.inScene.routeMesh.material?.dispose?.();
-        root.remove(_ARK.inScene.routeMesh);
+        _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
         _ARK.inScene.routeMesh = null;
       }
-      if (!Array.isArray(points) || points.length < 2) throw new Error("renderRoute3D: invalid points");
+    }
 
+    function renderRouteTruth(points) {
+      const T = _ARK.inScene.THREE, root = _ARK.inScene.root;
+      const pts = points.map(p => navToWorld({x:p.x, y:p.y}));
+      const g = new T.BufferGeometry().setFromPoints(pts);
+      const m = new T.LineBasicMaterial({ linewidth: 3, depthTest: false });
+      const line = new T.Line(g, m);
+      root.add(line);
+      _ARK.inScene.routeMesh = line;
+    }
+
+    function renderRoutePretty(points) {
+      const T = _ARK.inScene.THREE, root = _ARK.inScene.root;
       const pts = points.map(p => navToWorld({x:p.x, y:p.y}));
       const curve = new T.CatmullRomCurve3(pts, false, "centripetal", 0.35);
       const tubularSegments = Math.max(100, pts.length * 20);
@@ -153,17 +168,27 @@
       _ARK.inScene.routeMesh = mesh;
     }
 
+    function renderRoute3D(points) {
+      if (!_ARK.inScene.available) throw new Error("In-scene not available");
+      if (!Array.isArray(points) || points.length < 2) throw new Error("renderRoute3D: invalid points");
+      clearRoute();
+      if (_ARK.truthMode) renderRouteTruth(points);
+      else renderRoutePretty(points);
+    }
+
     // ------------ Buttons
     btnReset.onclick = () => {
-      if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
-        _ARK.inScene.routeMesh.geometry?.dispose?.();
-        _ARK.inScene.routeMesh.material?.dispose?.();
-        _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
-        _ARK.inScene.routeMesh = null;
-      }
+      clearRoute();
       _ARK.threatWorld = null;
       _ARK.threatNav = null;
       say('Reset');
+    };
+
+    btnTruth.onclick = () => {
+      _ARK.truthMode = !_ARK.truthMode;
+      btnTruth.textContent = `Truth Mode: ${_ARK.truthMode ? 'On' : 'Off'}`;
+      // If a route is already drawn, re-render it in the new mode
+      // (We'd need to store last points to do that; keeping it simple: click Compute again)
     };
 
     btnThreat.onclick = () => {
@@ -211,7 +236,7 @@
 
         if (!pts || pts.length < 2) throw new Error("Router returned no usable points");
         renderRoute3D(pts);
-        say("Route rendered (3D)");
+        say(_ARK.truthMode ? "Route rendered (Truth line)" : "Route rendered (3D)");
       } catch (err) {
         console.error(err);
         say(`Error: ${err.message || err}`);
@@ -242,17 +267,14 @@
           // enable UI once scene is up; compute is additionally gated by backendReady
           btnThreat.disabled = false;
           btnCompute.disabled = !_ARK.backendReady;
+          btnTruth.disabled = !_ARK.backendReady;
         }
         onTick() {}
         onDestroy() {
           _ARK.inScene.available = false;
-          if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
-            _ARK.inScene.routeMesh.geometry?.dispose?.();
-            _ARK.inScene.routeMesh.material?.dispose?.();
-            _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
-          }
+          clearRoute();
           _ARK.inScene = { available:false, THREE:null, root:null, routeMesh:null };
-          btnThreat.disabled = true; btnCompute.disabled = true;
+          btnThreat.disabled = true; btnCompute.disabled = true; btnTruth.disabled = true;
         }
       }
 
