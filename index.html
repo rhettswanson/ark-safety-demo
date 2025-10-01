@@ -51,6 +51,7 @@
       <button id="btnPlaceThreat" disabled>Place Threat</button>
       <button id="btnCompute" disabled>Compute Route</button>
       <button id="btnToggleTruth" disabled>Truth Mode: Off</button>
+      <button id="btnProbe" disabled>Probe Node</button>
       <button id="btnReset">Reset</button>
       <span class="spacer"></span>
       <span class="status" id="status"><span class="dot warm"></span>Connecting…</span>
@@ -89,6 +90,7 @@
     const btnThreat  = document.getElementById('btnPlaceThreat');
     const btnCompute = document.getElementById('btnCompute');
     const btnTruth   = document.getElementById('btnToggleTruth');
+    const btnProbe   = document.getElementById('btnProbe');
     const btnReset   = document.getElementById('btnReset');
 
     const say = (m) => { hud.textContent = m; console.log('[ARK]', m); };
@@ -120,12 +122,14 @@
         const uiUp = _ARK.inScene.available;
         btnCompute.disabled = !(j.ready && uiUp);
         btnTruth.disabled = !(j.ready && uiUp);
+        btnProbe.disabled = !(j.ready && uiUp);
         btnThreat.disabled  = !uiUp;
       } catch (e) {
         setStatus(`<span class="dot err"></span>Health error`);
         _ARK.backendReady = false;
         btnCompute.disabled = true;
         btnTruth.disabled = true;
+        btnProbe.disabled = true;
       }
     }
     setInterval(pollHealth, 1000);
@@ -143,6 +147,11 @@
         _ARK.inScene.routeMesh.material?.dispose?.();
         _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
         _ARK.inScene.routeMesh = null;
+      }
+      // also clear node viz, if any
+      if (window._navVizGroup && _ARK.inScene.root) {
+        _ARK.inScene.root.remove(window._navVizGroup);
+        window._navVizGroup = null;
       }
     }
 
@@ -176,6 +185,56 @@
       else renderRoutePretty(points);
     }
 
+    // --- Tiny nav-node visualizer (Option B)
+    async function probeAndRenderNearestVisible(x, y) {
+      const url = `${BACKEND_URL}/debug/snap_probe?x=${x}&y=${y}&k=120`;
+      const res = await fetch(url, { method: 'POST' });
+      const data = await res.json();
+      console.log('snap_probe', data);
+
+      // cleanup old markers
+      if (window._navVizGroup && _ARK.inScene.root) _ARK.inScene.root.remove(window._navVizGroup);
+      const T = _ARK.inScene.THREE;
+      const g = new T.Group();
+      window._navVizGroup = g; _ARK.inScene.root.add(g);
+
+      // helper to draw a small disk
+      function dot(px, py, color, r=0.25) {
+        const geom = new T.CircleGeometry(r, 24);
+        const mat = new T.MeshBasicMaterial({ color, depthTest: false });
+        const m = new T.Mesh(geom, mat);
+        m.position.set(px, ROUTE_Y + 0.02, py);
+        g.add(m);
+      }
+
+      // your probe point
+      dot(x, y, 0x0066ff, 0.25); // blue dot at probe
+
+      // draw top candidates (grey = not visible, green = visible)
+      for (const c of (data.sample_top || [])) {
+        dot(c.xy[0], c.xy[1], c.visible ? 0x00cc66 : 0x888888, 0.18);
+      }
+
+      // draw the chosen nearest visible node + a line from probe
+      const nv = data.nearest_visible_node;
+      if (nv && nv.xy) {
+        dot(nv.xy[0], nv.xy[1], 0x00ff00, 0.3); // bright green
+        const geom = new T.BufferGeometry().setFromPoints([
+          new T.Vector3(x, ROUTE_Y + 0.01, y),
+          new T.Vector3(nv.xy[0], ROUTE_Y + 0.01, nv.xy[1]),
+        ]);
+        const mat = new T.LineBasicMaterial({ color: 0x00ff00, linewidth: 2, depthTest: false });
+        g.add(new T.Line(geom, mat));
+      }
+
+      // HUD hint
+      if (nv?.dist_m != null) {
+        say(`Probe: nearest visible nid=${nv.nid}, dist=${nv.dist_m.toFixed(2)} m, mode=${nv.mode || 'none'}`);
+      } else {
+        say(`Probe: no visible node found (k=${(data.snap_params||{}).k})`);
+      }
+    }
+
     // ------------ Buttons
     btnReset.onclick = () => {
       clearRoute();
@@ -187,8 +246,7 @@
     btnTruth.onclick = () => {
       _ARK.truthMode = !_ARK.truthMode;
       btnTruth.textContent = `Truth Mode: ${_ARK.truthMode ? 'On' : 'Off'}`;
-      // If a route is already drawn, re-render it in the new mode
-      // (We'd need to store last points to do that; keeping it simple: click Compute again)
+      // re-compute to re-render in chosen style
     };
 
     btnThreat.onclick = () => {
@@ -197,6 +255,14 @@
       _ARK.threatWorld = { x: pos.x, y: pos.y, z: pos.z };
       _ARK.threatNav   = worldToNav(pos);
       say(`Threat set at camera (nav): (${_ARK.threatNav.x.toFixed(2)}, ${_ARK.threatNav.y.toFixed(2)})`);
+    };
+
+    // Probe button: uses threat if set, else current camera nav XY
+    btnProbe.onclick = async () => {
+      if (!_ARK.inScene.available) { say("In-scene not ready"); return; }
+      const src = _ARK.threatNav || (_ARK.camera?.position && worldToNav(_ARK.camera.position));
+      if (!src) { say("No camera pose yet"); return; }
+      await probeAndRenderNearestVisible(src.x, src.y);
     };
 
     // ---- Single-flight + timeout to prevent request storms
@@ -268,13 +334,14 @@
           btnThreat.disabled = false;
           btnCompute.disabled = !_ARK.backendReady;
           btnTruth.disabled = !_ARK.backendReady;
+          btnProbe.disabled = !_ARK.backendReady;
         }
         onTick() {}
         onDestroy() {
           _ARK.inScene.available = false;
           clearRoute();
           _ARK.inScene = { available:false, THREE:null, root:null, routeMesh:null };
-          btnThreat.disabled = true; btnCompute.disabled = true; btnTruth.disabled = true;
+          btnThreat.disabled = true; btnCompute.disabled = true; btnTruth.disabled = true; btnProbe.disabled = true;
         }
       }
 
