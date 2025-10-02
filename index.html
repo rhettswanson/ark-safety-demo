@@ -266,6 +266,7 @@
     let _busy = false;
 
     // CHANGE #1: Compute always recomputes start from camera, snaps to nearest visible node (if any), then routes
+// Compute always recomputes start from camera, snaps to nearest visible node (if any), then routes
 btnCompute.onclick = async () => {
   if (_busy) { say('Already computing…'); return; }
   _busy = true;
@@ -289,7 +290,7 @@ btnCompute.onclick = async () => {
 
     const threat = _ARK.threatNav;
 
-    // 3) route
+    // 3) route (with timeout)
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
 
@@ -300,13 +301,29 @@ btnCompute.onclick = async () => {
       signal: controller.signal
     }).finally(() => clearTimeout(timer));
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    // ---- robust response handling: JSON or text fallback ----
+    let data = null, rawText = null;
+    try { data = await res.clone().json(); } catch { rawText = await res.text(); }
 
-    const pts = Array.isArray(data.route) ? data.route.map(([x,y]) => ({x,y}))
-              : Array.isArray(data.points) ? data.points : null;
+    if (!res.ok) {
+      const msg = (data && (data.error || data.detail)) || rawText || `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    if (!data || typeof data !== 'object') {
+      throw new Error('Empty response from router');
+    }
 
-    if (!pts || pts.length < 2) throw new Error("Router returned no usable points");
+    const pts =
+      Array.isArray(data.route)  ? data.route.map(([x, y]) => ({ x, y })) :
+      Array.isArray(data.points) ? data.points :
+      null;
+
+    if (!pts || pts.length < 2) {
+      const why = data.used
+        ? `used start_nid=${data.used.start_nid}, goal_nid=${data.used.goal_nid}`
+        : 'no route points returned';
+      throw new Error(`Router returned no usable points (${why})`);
+    }
 
     renderRoute3D(pts);
 
