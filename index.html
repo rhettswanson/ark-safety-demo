@@ -103,7 +103,7 @@
       threatWorld: null,
       threatNav:   null,
       backendReady: false,
-      truthMode: false,   // NEW: line vs tube
+      truthMode: false,   // line vs tube
     };
 
     // --------- Health poll
@@ -140,6 +140,12 @@
     const worldToNav = (p) => ({ x: p.x, y: p.z });
     const navToWorld = (p) => new _ARK.inScene.THREE.Vector3(p.x, ROUTE_Y, p.y);
 
+    // Convenience: get current camera nav XY
+    const getCamNavXY = () => {
+      if (!_ARK.camera?.position) throw new Error("No camera pose yet");
+      return worldToNav(_ARK.camera.position);
+    };
+
     // --------- Route renderers
     function clearRoute() {
       if (_ARK.inScene.routeMesh && _ARK.inScene.root) {
@@ -148,7 +154,6 @@
         _ARK.inScene.root.remove(_ARK.inScene.routeMesh);
         _ARK.inScene.routeMesh = null;
       }
-      // also clear node viz, if any
       if (window._navVizGroup && _ARK.inScene.root) {
         _ARK.inScene.root.remove(window._navVizGroup);
         window._navVizGroup = null;
@@ -192,13 +197,11 @@
       const data = await res.json();
       console.log('snap_probe', data);
 
-      // cleanup old markers
       if (window._navVizGroup && _ARK.inScene.root) _ARK.inScene.root.remove(window._navVizGroup);
       const T = _ARK.inScene.THREE;
       const g = new T.Group();
       window._navVizGroup = g; _ARK.inScene.root.add(g);
 
-      // helper to draw a small disk
       function dot(px, py, color, r=0.25) {
         const geom = new T.CircleGeometry(r, 24);
         const mat = new T.MeshBasicMaterial({ color, depthTest: false });
@@ -207,18 +210,15 @@
         g.add(m);
       }
 
-      // your probe point
-      dot(x, y, 0x0066ff, 0.25); // blue dot at probe
+      dot(x, y, 0x0066ff, 0.25); // probe
 
-      // draw top candidates (grey = not visible, green = visible)
       for (const c of (data.sample_top || [])) {
         dot(c.xy[0], c.xy[1], c.visible ? 0x00cc66 : 0x888888, 0.18);
       }
 
-      // draw the chosen nearest visible node + a line from probe
       const nv = data.nearest_visible_node;
       if (nv && nv.xy) {
-        dot(nv.xy[0], nv.xy[1], 0x00ff00, 0.3); // bright green
+        dot(nv.xy[0], nv.xy[1], 0x00ff00, 0.3);
         const geom = new T.BufferGeometry().setFromPoints([
           new T.Vector3(x, ROUTE_Y + 0.01, y),
           new T.Vector3(nv.xy[0], ROUTE_Y + 0.01, nv.xy[1]),
@@ -227,7 +227,6 @@
         g.add(new T.Line(geom, mat));
       }
 
-      // HUD hint
       if (nv?.dist_m != null) {
         say(`Probe: nearest visible nid=${nv.nid}, dist=${nv.dist_m.toFixed(2)} m, mode=${nv.mode || 'none'}`);
       } else {
@@ -246,18 +245,16 @@
     btnTruth.onclick = () => {
       _ARK.truthMode = !_ARK.truthMode;
       btnTruth.textContent = `Truth Mode: ${_ARK.truthMode ? 'On' : 'Off'}`;
-      // re-compute to re-render in chosen style
     };
 
-    btnThreat.onclick = () => {
+    // CHANGE #2: Place Threat only sets _ARK.threatNav from current camera (no other mutation)
+    btnThreat.onclick = async () => {
       if (!_ARK.camera?.position) { say("No camera pose yet"); return; }
-      const pos = _ARK.camera.position;
-      _ARK.threatWorld = { x: pos.x, y: pos.y, z: pos.z };
-      _ARK.threatNav   = worldToNav(pos);
-      say(`Threat set at camera (nav): (${_ARK.threatNav.x.toFixed(2)}, ${_ARK.threatNav.y.toFixed(2)})`);
+      const camNav = getCamNavXY();
+      _ARK.threatNav = camNav;
+      say(`Threat set at camera (nav): (${camNav.x.toFixed(2)}, ${camNav.y.toFixed(2)})`);
     };
 
-    // Probe button: uses threat if set, else current camera nav XY
     btnProbe.onclick = async () => {
       if (!_ARK.inScene.available) { say("In-scene not ready"); return; }
       const src = _ARK.threatNav || (_ARK.camera?.position && worldToNav(_ARK.camera.position));
@@ -265,32 +262,38 @@
       await probeAndRenderNearestVisible(src.x, src.y);
     };
 
-    // ---- Single-flight + timeout to prevent request storms
+    // ---- Single-flight + timeout
     let _busy = false;
 
+    // CHANGE #1: Compute always recomputes start from camera, snaps to nearest visible node (if any), then routes
     btnCompute.onclick = async () => {
       if (_busy) { say('Already computing…'); return; }
       _busy = true;
       try {
         if (!_ARK.inScene.available) throw new Error("In-scene not available");
+        if (!_ARK.backendReady) throw new Error("Backend not ready yet");
         if (!_ARK.camera?.position) throw new Error("No camera pose yet");
         if (!_ARK.threatNav) throw new Error("No threat set (click 'Place Threat' first)");
-        if (!_ARK.backendReady) throw new Error("Backend not ready yet");
 
-        const startNav  = worldToNav(_ARK.camera.position);
-        const threatNav = _ARK.threatNav;
+        const camNav = getCamNavXY();
+        // snap-to-visible for a clean start (falls back to camNav)
+        let start = camNav;
+        try {
+          const snapRes = await fetch(`${BACKEND_URL}/debug/snap_probe?x=${camNav.x}&y=${camNav.y}&k=150`, { method:'POST' });
+          const snap = await snapRes.json();
+          const nv = snap?.nearest_visible_node?.xy;
+          if (Array.isArray(nv) && nv.length === 2) start = { x: nv[0], y: nv[1] };
+        } catch {}
 
-        // 30s client-side cap (server caps internally at 5s)
+        const threat = _ARK.threatNav;
+
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 30000);
 
         const res = await fetch(`${BACKEND_URL}/route/auto`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            start:  { x: startNav.x,  y: startNav.y  },
-            threat: { x: threatNav.x, y: threatNav.y }
-          }),
+          body: JSON.stringify({ start, threat }),
           signal: controller.signal
         }).finally(() => clearTimeout(timer));
 
@@ -302,7 +305,7 @@
 
         if (!pts || pts.length < 2) throw new Error("Router returned no usable points");
         renderRoute3D(pts);
-        say(_ARK.truthMode ? "Route rendered (Truth line)" : "Route rendered (3D)");
+        say(`Used start=(${start.x.toFixed(2)}, ${start.y.toFixed(2)}) • threat=(${threat.x.toFixed(2)}, ${threat.y.toFixed(2)})`);
       } catch (err) {
         console.error(err);
         say(`Error: ${err.message || err}`);
@@ -330,7 +333,6 @@
           this.outputs.objectRoot = root;
           _ARK.inScene = { available:true, THREE:T, root, routeMesh:null };
           say("In-scene component initialized");
-          // enable UI once scene is up; compute is additionally gated by backendReady
           btnThreat.disabled = false;
           btnCompute.disabled = !_ARK.backendReady;
           btnTruth.disabled = !_ARK.backendReady;
