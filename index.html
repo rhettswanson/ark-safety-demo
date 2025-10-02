@@ -266,53 +266,68 @@
     let _busy = false;
 
     // CHANGE #1: Compute always recomputes start from camera, snaps to nearest visible node (if any), then routes
-    btnCompute.onclick = async () => {
-      if (_busy) { say('Already computing…'); return; }
-      _busy = true;
-      try {
-        if (!_ARK.inScene.available) throw new Error("In-scene not available");
-        if (!_ARK.backendReady) throw new Error("Backend not ready yet");
-        if (!_ARK.camera?.position) throw new Error("No camera pose yet");
-        if (!_ARK.threatNav) throw new Error("No threat set (click 'Place Threat' first)");
+btnCompute.onclick = async () => {
+  if (_busy) { say('Already computing…'); return; }
+  _busy = true;
+  try {
+    if (!_ARK.inScene.available) throw new Error("In-scene not available");
+    if (!_ARK.backendReady)      throw new Error("Backend not ready yet");
+    if (!_ARK.camera?.position)  throw new Error("No camera pose yet");
+    if (!_ARK.threatNav)         throw new Error("No threat set (click 'Place Threat' first)");
 
-        const camNav = getCamNavXY();
-        // snap-to-visible for a clean start (falls back to camNav)
-        let start = camNav;
-        try {
-          const snapRes = await fetch(`${BACKEND_URL}/debug/snap_probe?x=${camNav.x}&y=${camNav.y}&k=150`, { method:'POST' });
-          const snap = await snapRes.json();
-          const nv = snap?.nearest_visible_node?.xy;
-          if (Array.isArray(nv) && nv.length === 2) start = { x: nv[0], y: nv[1] };
-        } catch {}
+    // 1) recompute from current camera
+    const camNav = getCamNavXY();
 
-        const threat = _ARK.threatNav;
+    // 2) snap-to-visible for a clean start (fallback to camNav)
+    let start = camNav;
+    try {
+      const snapRes = await fetch(`${BACKEND_URL}/debug/snap_probe?x=${camNav.x}&y=${camNav.y}&k=150`, { method: 'POST' });
+      const snap = await snapRes.json();
+      const nv = snap?.nearest_visible_node?.xy;
+      if (Array.isArray(nv) && nv.length === 2) start = { x: nv[0], y: nv[1] };
+    } catch { /* non-fatal */ }
 
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 30000);
+    const threat = _ARK.threatNav;
 
-        const res = await fetch(`${BACKEND_URL}/route/auto`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ start, threat }),
-          signal: controller.signal
-        }).finally(() => clearTimeout(timer));
+    // 3) route
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    const res = await fetch(`${BACKEND_URL}/route/auto`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start, threat }),
+      signal: controller.signal
+    }).finally(() => clearTimeout(timer));
 
-        const pts = Array.isArray(data.route) ? data.route.map(([x,y]) => ({x,y}))
-                  : Array.isArray(data.points) ? data.points : null;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
 
-        if (!pts || pts.length < 2) throw new Error("Router returned no usable points");
-        renderRoute3D(pts);
-        say(`Used start=(${start.x.toFixed(2)}, ${start.y.toFixed(2)}) • threat=(${threat.x.toFixed(2)}, ${threat.y.toFixed(2)})`);
-      } catch (err) {
-        console.error(err);
-        say(`Error: ${err.message || err}`);
-      } finally {
-        _busy = false;
-      }
-    };
+    const pts = Array.isArray(data.route) ? data.route.map(([x,y]) => ({x,y}))
+              : Array.isArray(data.points) ? data.points : null;
+
+    if (!pts || pts.length < 2) throw new Error("Router returned no usable points");
+
+    renderRoute3D(pts);
+
+    // 4) HUD — prefer server diagnostics if present
+    if (data.used) {
+      say(
+        `start nid=${data.used.start_nid} (${data.used.start_xy.map(v=>v.toFixed(2)).join(',')}) • ` +
+        `goal nid=${data.used.goal_nid} (${data.used.goal_xy.map(v=>v.toFixed(2)).join(',')}) • ` +
+        `threat=(${data.used.threat_xy.map(v=>v.toFixed(2)).join(',')}) • ` +
+        `len=${(data.length_m ?? 0).toFixed(1)}m`
+      );
+    } else {
+      say(`Used start=(${start.x.toFixed(2)}, ${start.y.toFixed(2)}) • threat=(${threat.x.toFixed(2)}, ${threat.y.toFixed(2)})`);
+    }
+  } catch (err) {
+    console.error(err);
+    say(`Error: ${err.message || err}`);
+  } finally {
+    _busy = false;
+  }
+};
 
     // ------------ Bootstrap: mount Scene component
     const viewer = document.getElementById('mpv');
